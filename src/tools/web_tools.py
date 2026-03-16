@@ -36,7 +36,7 @@ class GoogleSearchTool:
             params = {
                 "q": query,
                 "cx": self.search_engine_id,
-                "num": min(num_results, 10)
+                "num": min(num_results, 5)
             }
 
             if date_restrict:

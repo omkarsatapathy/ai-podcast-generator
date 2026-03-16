@@ -18,6 +18,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
 
+from config.settings import settings
 from src.tools.web_tools import get_current_date
 
 
@@ -33,6 +34,10 @@ class Phase1State(TypedDict):
     queries: List[Dict[str, Any]]  # Contains query text, date_filter, and results
     current_date: str
     messages: List
+    scraped_pages: List[Dict[str, Any]]  # Individual scrape results
+    merged_research_text: str  # All scraped text merged into one string
+    scrape_failure_rate: float  # Fraction of URLs that failed
+    query_rewrite_count: int  # Times queries have been rewritten (max 3)
 
 
 # ==================== NODES ====================
@@ -44,6 +49,10 @@ def initialize_node(state: Phase1State) -> Phase1State:
     state["seed_context"] = ""
     state["queries"] = []
     state["messages"] = []
+    state["scraped_pages"] = []
+    state["merged_research_text"] = ""
+    state["scrape_failure_rate"] = 0.0
+    state["query_rewrite_count"] = 0
     return state
 
 
@@ -125,8 +134,13 @@ def extract_context_node(state: Phase1State) -> Phase1State:
 
 
 def generate_queries_node(state: Phase1State) -> Phase1State:
-    """Generate 10 diverse search queries."""
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
+    """Generate 10 diverse search queries. On re-entry (retry loop), increments rewrite counter."""
+    # If queries already exist, this is a retry — increment counter
+    if state["queries"]:
+        state["query_rewrite_count"] += 1
+        print(f"🔄 QUERY REWRITE #{state['query_rewrite_count']}/{settings.MAX_QUERY_REWRITE_ATTEMPTS}")
+
+    llm = ChatOpenAI(model=settings.QUERY_PRODUCER_MODEL, temperature=settings.QUERY_PRODUCER_TEMPERATURE)
 
     topic = state["topic"]
     freshness = state["freshness"]
@@ -164,7 +178,7 @@ Generate queries that:
 3. Cover historical context and current state
 4. Are specific and will return authoritative sources
 
-Return ONLY a numbered list of 10 queries, one per line."""
+Return ONLY a numbered list of {settings.QUERY_PRODUCE_PER_TOPIC} queries, one per line."""
 
     response = llm.invoke([SystemMessage(content=system_prompt)])
 
@@ -173,11 +187,11 @@ Return ONLY a numbered list of 10 queries, one per line."""
     for line in response.content.split("\n"):
         line = line.strip()
         if line and any(line.startswith(f"{i}.") for i in range(1, 11)):
-            # Remove number prefix
-            query_text = line.split(".", 1)[1].strip()
+            # Remove number prefix and surrounding quotes
+            query_text = line.split(".", 1)[1].strip().strip('"\'')
             queries.append({"query": query_text, "date_filter": None})
 
-    state["queries"] = queries[:10]  # Ensure exactly 10
+    state["queries"] = queries[:settings.QUERY_PRODUCE_PER_TOPIC]  # Ensure exactly 10
 
     print(f"✅ Generated {len(state['queries'])} queries\n")
 
@@ -217,19 +231,97 @@ def execute_searches_node(state: Phase1State) -> Phase1State:
         # Execute search with date filter if provided
         results = search_tool.search(
             query_text,
-            num_results=5,
+            num_results=settings.SEARCH_RESULTS_PER_QUERY,
             date_restrict=date_filter
         )
 
         # Store results in query dict
         query_dict["results"] = results
+        print(f"      → {len(results)} results, links: {[r.get('link','')[:50] for r in results[:3]]}")
 
-    print("✅ All searches completed!\n")
+    total_links = sum(len(q.get("results", [])) for q in queries)
+    print(f"✅ All searches completed! Total results: {total_links}\n")
+
+    return state
+
+
+def scrape_pages_node(state: Phase1State) -> Phase1State:
+    """Scrape all URLs from search results using BS4 + ThreadPoolExecutor."""
+    from src.agents.phase1.web_scraper import scrape_all_pages
+
+    # Collect all unique URLs from search results
+    urls = set()
+    for query_dict in state["queries"]:
+        for result in query_dict.get("results", []):
+            link = result.get("link", "")
+            if link:
+                urls.add(link)
+
+    urls = list(urls)
+    total = len(urls)
+    print(f"\n🌐 SCRAPING {total} unique URLs with {settings.WEB_SCRAPER_MAX_WORKERS} workers...")
+
+    if not urls:
+        state["scraped_pages"] = []
+        state["scrape_failure_rate"] = 1.0
+        return state
+
+    results = scrape_all_pages(urls)
+
+    succeeded = sum(1 for r in results if r["success"])
+    failed = total - succeeded
+    failure_rate = failed / total if total > 0 else 0.0
+
+    state["scraped_pages"] = results
+    state["scrape_failure_rate"] = failure_rate
+
+    print(f"   ✅ Succeeded: {succeeded}/{total}")
+    print(f"   ❌ Failed: {failed}/{total} ({failure_rate:.0%})")
+
+    return state
+
+
+def evaluate_scrape_quality_node(state: Phase1State) -> Phase1State:
+    """Log scrape quality. Routing is handled by conditional edges."""
+    failure_rate = state["scrape_failure_rate"]
+    rewrite_count = state["query_rewrite_count"]
+
+    if failure_rate > settings.LINK_FAILURE_THRESHOLD and rewrite_count < settings.MAX_QUERY_REWRITE_ATTEMPTS:
+        print(f"\n⚠️  FAILURE RATE {failure_rate:.0%} > {settings.LINK_FAILURE_THRESHOLD:.0%} threshold")
+        print(f"   Will rewrite queries (attempt {rewrite_count + 1}/{settings.MAX_QUERY_REWRITE_ATTEMPTS})...\n")
+    elif failure_rate > settings.LINK_FAILURE_THRESHOLD:
+        print(f"\n⚠️  FAILURE RATE {failure_rate:.0%} still high but max retries ({settings.MAX_QUERY_REWRITE_ATTEMPTS}) reached. Proceeding with available data.\n")
+    else:
+        print(f"\n✅ SCRAPE QUALITY OK ({failure_rate:.0%} failure rate). Proceeding to merge.\n")
+
+    return state
+
+
+def merge_texts_node(state: Phase1State) -> Phase1State:
+    """Merge all successfully scraped text into a single string for the next phase."""
+    texts = [page["text"] for page in state["scraped_pages"] if page["success"] and page["text"]]
+
+    merged = "\n\n---\n\n".join(texts)
+    state["merged_research_text"] = merged
+
+    print(f"📝 MERGED {len(texts)} documents into research text ({len(merged)} chars)\n")
 
     return state
 
 
 # ==================== ROUTING ====================
+
+def route_scrape_quality(state: Phase1State) -> str:
+    """Route based on scrape failure rate.
+
+    If >30% failed AND retries remain -> loop back to generate_queries
+    Otherwise -> proceed to merge_texts
+    """
+    if (state["scrape_failure_rate"] > settings.LINK_FAILURE_THRESHOLD
+            and state["query_rewrite_count"] < settings.MAX_QUERY_REWRITE_ATTEMPTS):
+        return "generate_queries"
+    return "merge_texts"
+
 
 def route_freshness(state: Phase1State) -> str:
     """Route workflow based on freshness classification.
@@ -248,17 +340,15 @@ def route_freshness(state: Phase1State) -> str:
 def create_phase1_graph():
     """Create and compile the Phase 1 (Research & Ingestion) subgraph.
 
-    This is an independent subgraph that can be:
-    1. Imported and run standalone by query_producer.py
-    2. Composed as a node in the main orchestrator
-
     Workflow:
-    1. initialize -> Set up state with default values
-    2. classify_freshness -> Determine if topic is recent/evergreen
-    3a. Recent path: seed_search -> extract_context -> generate_queries
-    3b. Evergreen path: generate_queries (skip seed search)
-    4. date_tagging -> Add date filters to queries for recent topics
-    5. execute_searches -> Run Google searches for all queries
+    1. initialize -> Set up state
+    2. classify_freshness -> recent/evergreen
+    3a. Recent: seed_search -> extract_context -> generate_queries
+    3b. Evergreen: generate_queries
+    4. date_tagging -> execute_searches
+    5. scrape_pages -> evaluate_scrape_quality
+    6. If >30% fail & retries<3: loop back to generate_queries
+    7. Otherwise: merge_texts -> END
 
     Returns:
         CompiledGraph: Ready-to-run Phase 1 subgraph
@@ -273,6 +363,9 @@ def create_phase1_graph():
     workflow.add_node("generate_queries", generate_queries_node)
     workflow.add_node("date_tagging", date_tagging_node)
     workflow.add_node("execute_searches", execute_searches_node)
+    workflow.add_node("scrape_pages", scrape_pages_node)
+    workflow.add_node("evaluate_scrape_quality", evaluate_scrape_quality_node)
+    workflow.add_node("merge_texts", merge_texts_node)
 
     # Define edges
     workflow.set_entry_point("initialize")
@@ -295,6 +388,19 @@ def create_phase1_graph():
     # Both paths converge
     workflow.add_edge("generate_queries", "date_tagging")
     workflow.add_edge("date_tagging", "execute_searches")
-    workflow.add_edge("execute_searches", END)
+    workflow.add_edge("execute_searches", "scrape_pages")
+    workflow.add_edge("scrape_pages", "evaluate_scrape_quality")
+
+    # Retry loop: if >30% fail and retries remain, loop back to generate_queries
+    workflow.add_conditional_edges(
+        "evaluate_scrape_quality",
+        route_scrape_quality,
+        {
+            "generate_queries": "generate_queries",
+            "merge_texts": "merge_texts"
+        }
+    )
+
+    workflow.add_edge("merge_texts", END)
 
     return workflow.compile()

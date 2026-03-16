@@ -22,6 +22,7 @@ dependencies = [
     # Web Search & Extraction
     "google-api-python-client>=2.100.0",
     "trafilatura>=1.6.0",
+    "boilerpy3>=1.0.7",
     # Embeddings & Vector Store
     "sentence-transformers>=2.2.0",
     "faiss-cpu>=1.7.4",
