@@ -400,9 +400,11 @@ def scrape_single_page(url: str) -> Dict[str, Any]:
             if not text or len(text) < MIN_CONTENT_LENGTH:
                 try:
                     with suppress_stderr():  # Suppress boilerpy3 error messages
-                        extractor = extractors.ArticleExtractor()
-                        text = extractor.get_content(response.text)
-                except (AttributeError, ValueError, KeyError, Exception):
+                        extractor = extractors.ArticleExtractor(raise_on_failure=False)
+                        bp_text = extractor.get_content(response.text)
+                        if bp_text and len(bp_text) >= MIN_CONTENT_LENGTH:
+                            text = bp_text
+                except Exception:
                     # boilerpy3 may fail on malformed HTML - silently continue with trafilatura result
                     pass
 

@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     MAX_CHAPTER_DURATION: float = 5.0
     CLUSTER_SIMILARITY_THRESHOLD: float = 0.45
 
+    # Phase 2: Character Designer Settings
+    CHARACTER_DESIGNER_MODEL: str = "gpt-5.1"
+    CHARACTER_DESIGNER_TEMPERATURE: float = 0.8
+
     class Config:
         env_file = ".env"
         case_sensitive = True

@@ -69,3 +69,48 @@ QUALITY RULES:
 - Transition hooks must create curiosity. BAD: "Next we'll talk about X". GOOD: "But not everyone is celebrating these breakthroughs..."
 
 Return outlines for all {num_chapters} chapters."""
+
+
+# ==================== PHASE 2: CHARACTER DESIGNER ====================
+
+CHARACTER_DESIGNER_PROMPT = """You are a podcast character designer. Create {num_speakers} distinct speaker personas for a podcast about: {topic}
+
+CHAPTER CONTEXT (use this to tailor expertise and personality):
+{chapters_context}
+
+ROLE ASSIGNMENT RULES:
+{role_rules}
+
+AVAILABLE TTS VOICES (you MUST pick from this list):
+{voices_list}
+
+VOICE SELECTION RULES:
+- Each character must use a DIFFERENT voice from the list above.
+- Match voice personality to character role (e.g. authoritative voice for expert, energetic for host).
+- The "tts_voice_id" field must be the exact voice Name from the list.
+- The "gender" field must match the voice's gender.
+{gender_rule}
+
+PERSONA DESIGN RULES:
+- Characters must CONTRAST each other — different vocabulary levels, different speaking styles.
+- No two characters should have the same vocabulary_level.
+- filler_patterns: 2-4 speech fillers unique to each character (e.g. "you know", "right?", "basically").
+- reaction_patterns: 2-4 reactions unique to each character (e.g. "Oh interesting!", "Wait, really?").
+- catchphrases: 2-3 signature phrases each character uses repeatedly.
+- speaking_style: Describe HOW they talk, not WHAT they say.
+- expertise_area: Must be specific to the podcast topic, not generic.
+- emotional_range: What makes them excited, skeptical, or amused — specific to this topic.
+
+HOST-SPECIFIC RULES (role=host):
+The host is the engine of the conversation — not a passive moderator. Their persona must reflect ALL of the following active behaviors:
+- Asking questions: Opens each chapter beat with a question, surfaces "what the listener at home is thinking".
+- Interrupting: Jumps in mid-sentence when something is surprising or unclear — not rudely, but with genuine curiosity (e.g. "Wait — hold on — you're saying that…?").
+- Counter-questioning: When an expert gives an answer, the host pushes back with "but what about…" or "okay but doesn't that mean…" to deepen the conversation.
+- Plain-language recaps: After a complex explanation, the host summarises it in one sentence to confirm they understood and help the listener follow.
+- Admitting confusion: Comfortable saying "I'm not fully with you yet — can you give me a real-world example?" — this is an asset, not a weakness.
+- speaking_style must explicitly mention: asking follow-up questions, interrupting to clarify, recapping in plain terms, and playing devil's advocate.
+- reaction_patterns must include at least one interruption-style reaction (e.g. "Wait, hold on —", "Hang on, say that again.").
+- catchphrases must include at least one question-driven phrase (e.g. "So what does that actually mean for a normal person?", "Bottom line it for us.").
+- disagreement_style must describe HOW the host challenges without being combative — e.g. playing confused listener, asking for concrete examples.
+
+Make each character feel like a real person a listener would recognize and remember."""

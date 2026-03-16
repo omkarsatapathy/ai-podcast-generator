@@ -2,7 +2,7 @@
 
 Workflow:
 1. chapter_planner → Analyze, cluster, sequence, and outline chapters
-2. character_designer → Create speaker personas (placeholder)
+2. character_designer → Create speaker personas via single LLM call
 """
 
 from typing import TypedDict, List, Dict, Any
@@ -21,7 +21,7 @@ class Phase2State(TypedDict):
     analyzed_chunks: List[Dict[str, Any]]
     total_estimated_duration: float
 
-    # Character Designer outputs (placeholder)
+    # Character Designer outputs
     character_personas: List[Dict[str, Any]]
 
 
@@ -47,10 +47,25 @@ def chapter_planner_node(state: Phase2State) -> Phase2State:
     return state
 
 
-def character_designer_placeholder(state: Phase2State) -> Phase2State:
-    """Placeholder for Character Designer agent."""
-    print("\n⏳ PHASE 2 - CHARACTER DESIGNER (Not yet implemented)\n")
-    state["character_personas"] = []
+def character_designer_node(state: Phase2State) -> Phase2State:
+    """Execute Character Designer agent."""
+    from src.agents.phase2.character_designer import design_characters
+
+    print("\n🎭 PHASE 2 - CHARACTER DESIGNER")
+    print(f"   Designing {state['num_speakers']} speaker personas\n")
+
+    personas = design_characters(
+        topic=state["topic"],
+        chapter_outlines=state["chapter_outlines"],
+        num_speakers=state["num_speakers"],
+    )
+
+    state["character_personas"] = personas
+
+    for p in personas:
+        print(f"   ✅ {p['role'].upper()}: {p['name']} (voice: {p['tts_voice_id']})")
+    print()
+
     return state
 
 
@@ -62,7 +77,7 @@ def create_phase2_graph():
     workflow = StateGraph(Phase2State)
 
     workflow.add_node("chapter_planner", chapter_planner_node)
-    workflow.add_node("character_designer", character_designer_placeholder)
+    workflow.add_node("character_designer", character_designer_node)
 
     workflow.set_entry_point("chapter_planner")
     workflow.add_edge("chapter_planner", "character_designer")

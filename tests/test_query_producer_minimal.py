@@ -147,9 +147,9 @@ def test_full_phase1():
 
 
 def test_phase2(phase1_final_state):
-    """Test Phase 2: Chapter Planner using Phase 1 output."""
+    """Test Phase 2: Chapter Planner + Character Designer using Phase 1 output."""
     print("\n" + "=" * 60)
-    print("Testing Phase 2 Pipeline (Chapter Planner)")
+    print("Testing Phase 2 Pipeline (Chapter Planner + Character Designer)")
     print("=" * 60)
     print()
 
@@ -173,17 +173,20 @@ def test_phase2(phase1_final_state):
         print(f"   Ranked chunks: {len(ranked_chunks)}")
         print()
 
+        from config.settings import settings
+        num_speakers = settings.NUM_SPEAKERS
+
         initial_state = {
             "topic": topic,
             "ranked_chunks": ranked_chunks,
-            "num_speakers": 2,
+            "num_speakers": num_speakers,
             "chapter_outlines": [],
             "analyzed_chunks": [],
             "total_estimated_duration": 0.0,
             "character_personas": [],
         }
 
-        print("⏳ Running Phase 2 (Chapter Planner)...\n")
+        print(f"⏳ Running Phase 2 (Chapter Planner + Character Designer, {num_speakers} speakers)...\n")
         final_state = graph.invoke(initial_state)
 
         # Display Phase 2 Results
@@ -234,12 +237,29 @@ def test_phase2(phase1_final_state):
             print(f"    - analysis_tone: \"{chunk.get('analysis_tone', 'N/A')}\"")
             print()
 
+        # Display character personas
+        character_personas = final_state.get("character_personas", [])
+        if character_personas:
+            print(f"\n{'=' * 60}")
+            print("🎭 CHARACTER PERSONAS")
+            print('=' * 60)
+            for p in character_personas:
+                print(f"\n  {p['role'].upper()}: {p['name']}")
+                print(f"    Voice: {p['tts_voice_id']} ({p['gender']})")
+                print(f"    Expertise: {p['expertise_area']}")
+                print(f"    Style: {p['speaking_style']}")
+                print(f"    Vocabulary: {p['vocabulary_level']}")
+                print(f"    Fillers: {p['filler_patterns']}")
+                print(f"    Reactions: {p['reaction_patterns']}")
+                print(f"    Catchphrases: {p['catchphrases']}")
+
         # Save Phase 2 results to JSON
         phase2_results = {
             "topic": topic,
             "total_chapters": len(chapter_outlines),
             "total_duration_minutes": total_duration,
             "chapter_outlines": chapter_outlines,
+            "character_personas": character_personas,
             "analyzed_chunks_count": len(analyzed_chunks),
             "sample_chunks": analyzed_chunks[:3],  # Save first 3 for inspection
         }
