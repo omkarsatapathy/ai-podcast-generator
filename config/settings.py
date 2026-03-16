@@ -57,6 +57,17 @@ class Settings(BaseSettings):
     RERANKER_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"  # Cross-encoder for relevance
     MIN_CHUNK_WORDS: int = 200  # Minimum words in extracted text to keep chunk
 
+    # Phase 2: Chapter Planner Settings
+    CHAPTER_PLANNER_MODEL: str = "gpt-5.1"
+    CHAPTER_PLANNER_TEMPERATURE: float = 0.7
+    CHAPTER_PLANNER_BATCH_SIZE: int = 5
+    MIN_CHAPTERS: int = 6
+    MAX_CHAPTERS: int = 8
+    TARGET_DURATION_MINUTES: float = 26.0
+    MIN_CHAPTER_DURATION: float = 2.0
+    MAX_CHAPTER_DURATION: float = 5.0
+    CLUSTER_SIMILARITY_THRESHOLD: float = 0.45
+
     class Config:
         env_file = ".env"
         case_sensitive = True

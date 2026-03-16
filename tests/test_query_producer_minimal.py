@@ -1,6 +1,7 @@
-"""Minimal test script for full Phase 1 pipeline (queries → search → scrape → merge)."""
+"""Minimal test script for full Phase 1 + Phase 2 pipeline (queries → search → scrape → merge → chapter planning)."""
 import os
 import sys
+import json
 from pathlib import Path
 
 # Add project root to path
@@ -13,6 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 OUTPUT_FILE = project_root / "data" / "output" / "merged_research.txt"
+PHASE2_OUTPUT_FILE = project_root / "data" / "output" / "phase2_results.json"
 
 
 def check_env_vars():
@@ -128,18 +130,163 @@ def test_full_phase1():
 
         print(f"\n📊 WORD COUNT: {word_count}")
         print("=" * 60)
-        print("✅ TEST PASSED! (Reached final node: dedup_and_rank → END)")
+        print("✅ PHASE 1 TEST PASSED! (Reached final node: dedup_and_rank → END)")
         print("=" * 60)
+
+        return final_state
 
     except Exception as e:
         print("\n" + "=" * 60)
-        print("❌ TEST FAILED!")
+        print("❌ PHASE 1 TEST FAILED!")
         print("=" * 60)
         print(f"\nError: {e}\n")
 
         import traceback
         traceback.print_exc()
+        return None
+
+
+def test_phase2(phase1_final_state):
+    """Test Phase 2: Chapter Planner using Phase 1 output."""
+    print("\n" + "=" * 60)
+    print("Testing Phase 2 Pipeline (Chapter Planner)")
+    print("=" * 60)
+    print()
+
+    try:
+        print("📦 Importing Phase 2 graph...")
+        from src.pipeline.phases.phase2_graph import create_phase2_graph
+        print("✅ Import successful\n")
+
+        graph = create_phase2_graph()
+
+        # Prepare Phase 2 initial state from Phase 1 output
+        ranked_chunks = phase1_final_state.get("ranked_chunks", [])
+        topic = phase1_final_state.get("topic", "")
+
+        if not ranked_chunks:
+            print("❌ No ranked chunks from Phase 1! Cannot run Phase 2.")
+            return None
+
+        print(f"📥 Phase 2 Input:")
+        print(f"   Topic: '{topic}'")
+        print(f"   Ranked chunks: {len(ranked_chunks)}")
+        print()
+
+        initial_state = {
+            "topic": topic,
+            "ranked_chunks": ranked_chunks,
+            "num_speakers": 2,
+            "chapter_outlines": [],
+            "analyzed_chunks": [],
+            "total_estimated_duration": 0.0,
+            "character_personas": [],
+        }
+
+        print("⏳ Running Phase 2 (Chapter Planner)...\n")
+        final_state = graph.invoke(initial_state)
+
+        # Display Phase 2 Results
+        print("=" * 60)
+        print("✅ PHASE 2 RESULTS")
+        print("=" * 60)
+
+        chapter_outlines = final_state.get("chapter_outlines", [])
+        analyzed_chunks = final_state.get("analyzed_chunks", [])
+        total_duration = final_state.get("total_estimated_duration", 0.0)
+
+        print(f"\n📚 Chapters Created: {len(chapter_outlines)}")
+        print(f"⏱️  Total Estimated Duration: {total_duration:.1f} minutes")
+        print(f"📊 Analyzed Chunks: {len(analyzed_chunks)}")
+
+        # Display chapter outlines
+        print(f"\n{'=' * 60}")
+        print("📖 CHAPTER OUTLINES")
+        print('=' * 60)
+
+        for i, chapter in enumerate(chapter_outlines, 1):
+            print(f"\n📌 Chapter {chapter['chapter_number']}: {chapter['title']}")
+            print(f"   Act: {chapter['act']} | Energy: {chapter['energy_level']} | Duration: {chapter['estimated_duration_minutes']:.1f} min")
+            print(f"   Key Points ({len(chapter['key_points'])}):")
+            for j, point in enumerate(chapter['key_points'], 1):
+                print(f"      {j}. {point}")
+            print(f"   Transition Hook: \"{chapter['transition_hook']}\"")
+            print(f"   Source Chunks: {len(chapter['source_chunk_ids'])} chunks")
+
+        # Display chunk schema (show first 2 analyzed chunks as examples)
+        print(f"\n{'=' * 60}")
+        print("🔬 CHUNK SCHEMA (Sample)")
+        print('=' * 60)
+        print("\nShowing structure of analyzed chunks (first 2 examples):\n")
+
+        for i, chunk in enumerate(analyzed_chunks[:2], 1):
+            print(f"--- Chunk {i} ({chunk.get('chunk_id', 'N/A')}) ---")
+            print(f"  Original Fields:")
+            print(f"    - chunk_id: {chunk.get('chunk_id', 'N/A')}")
+            print(f"    - source_url: {chunk.get('source_url', 'N/A')[:60]}...")
+            print(f"    - word_count: {chunk.get('word_count', 'N/A')}")
+            print(f"    - relevance_score: {chunk.get('relevance_score', 'N/A'):.4f}")
+            print(f"    - text (preview): {chunk.get('text', '')[:100]}...")
+            print(f"\n  Phase 2 Analysis Fields (Added):")
+            print(f"    - analysis_topic: \"{chunk.get('analysis_topic', 'N/A')}\"")
+            print(f"    - analysis_subtopics: {chunk.get('analysis_subtopics', [])}")
+            print(f"    - analysis_summary: \"{chunk.get('analysis_summary', 'N/A')}\"")
+            print(f"    - analysis_tone: \"{chunk.get('analysis_tone', 'N/A')}\"")
+            print()
+
+        # Save Phase 2 results to JSON
+        phase2_results = {
+            "topic": topic,
+            "total_chapters": len(chapter_outlines),
+            "total_duration_minutes": total_duration,
+            "chapter_outlines": chapter_outlines,
+            "analyzed_chunks_count": len(analyzed_chunks),
+            "sample_chunks": analyzed_chunks[:3],  # Save first 3 for inspection
+        }
+
+        PHASE2_OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        PHASE2_OUTPUT_FILE.write_text(
+            json.dumps(phase2_results, indent=2, ensure_ascii=False),
+            encoding="utf-8"
+        )
+        print(f"💾 Phase 2 results saved to: {PHASE2_OUTPUT_FILE}")
+
+        print(f"\n{'=' * 60}")
+        print("✅ PHASE 2 TEST PASSED!")
+        print('=' * 60)
+
+        return final_state
+
+    except Exception as e:
+        print("\n" + "=" * 60)
+        print("❌ PHASE 2 TEST FAILED!")
+        print("=" * 60)
+        print(f"\nError: {e}\n")
+
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def test_full_pipeline():
+    """Test full pipeline: Phase 1 → Phase 2."""
+    print("🚀 Starting Full Pipeline Test (Phase 1 + Phase 2)")
+    print("=" * 60)
+    print()
+
+    # Run Phase 1
+    phase1_state = test_full_phase1()
+
+    # Run Phase 2 if Phase 1 succeeded
+    if phase1_state and phase1_state.get("ranked_chunks"):
+        test_phase2(phase1_state)
+    else:
+        print("\n⚠️  Skipping Phase 2 due to Phase 1 failure or missing ranked_chunks")
+
+    print("\n" + "=" * 60)
+    print("🏁 FULL PIPELINE TEST COMPLETE")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
-    test_full_phase1()
+    test_full_pipeline()
