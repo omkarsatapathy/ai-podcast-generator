@@ -38,6 +38,11 @@ class Phase1State(TypedDict):
     merged_research_text: str  # All scraped text merged into one string
     scrape_failure_rate: float  # Fraction of URLs that failed
     query_rewrite_count: int  # Times queries have been rewritten (max 3)
+    chapter_titles: List[str]  # 10 suggested chapter titles for stage 2
+
+    # Dedup + Relevance Scorer outputs (pure in-memory)
+    ranked_chunks: List[Dict[str, Any]]  # Top-K chunks for Chapter Planner
+    dedup_stats: Dict[str, Any]  # Processing statistics
 
 
 # ==================== NODES ====================
@@ -53,6 +58,7 @@ def initialize_node(state: Phase1State) -> Phase1State:
     state["merged_research_text"] = ""
     state["scrape_failure_rate"] = 0.0
     state["query_rewrite_count"] = 0
+    state["chapter_titles"] = []
     return state
 
 
@@ -134,7 +140,7 @@ def extract_context_node(state: Phase1State) -> Phase1State:
 
 
 def generate_queries_node(state: Phase1State) -> Phase1State:
-    """Generate 10 diverse search queries. On re-entry (retry loop), increments rewrite counter."""
+    """Generate 15 diverse search queries and 10 chapter titles. On re-entry (retry loop), increments rewrite counter."""
     # If queries already exist, this is a retry — increment counter
     if state["queries"]:
         state["query_rewrite_count"] += 1
@@ -147,10 +153,10 @@ def generate_queries_node(state: Phase1State) -> Phase1State:
     seed_context = state.get("seed_context", "")
     current_date = state["current_date"]
 
-    print(f"🤖 GENERATING QUERIES using LLM (freshness: {freshness})...\n")
+    print(f"🤖 GENERATING QUERIES AND CHAPTER TITLES using LLM (freshness: {freshness})...\n")
 
     if freshness == "recent":
-        system_prompt = f"""You are a search query expert. Generate {settings.QUERY_PRODUCE_PER_TOPIC} diverse, specific search queries for researching this recent topic.
+        system_prompt = f"""You are a search query expert and podcast content planner. Your task has two parts:
 
 Topic: {topic}
 Current Date: {current_date}
@@ -158,19 +164,40 @@ Current Date: {current_date}
 Context from seed search:
 {seed_context}
 
+PART 1 - SEARCH QUERIES:
+Generate {settings.QUERY_PRODUCE_PER_TOPIC} diverse, specific search queries for researching this recent topic.
+
 Generate queries that:
 1. Cover different angles (who, what, why, impact, reactions, background)
 2. Include specific names, dates, or events from the context
 3. Are specific and factual
 4. Will return high-quality sources
 
-Return ONLY a numbered list of {settings.QUERY_PRODUCE_PER_TOPIC} queries, one per line."""
+PART 2 - CHAPTER TITLES:
+Based on the topic and context, suggest 10 compelling chapter titles for a podcast episode. These should represent key aspects, themes, or segments that would make for engaging podcast content.
+
+FORMAT YOUR RESPONSE EXACTLY AS FOLLOWS:
+
+QUERIES:
+1. [first query]
+2. [second query]
+...
+{settings.QUERY_PRODUCE_PER_TOPIC}. [last query]
+
+CHAPTER_TITLES:
+1. [first chapter title]
+2. [second chapter title]
+...
+10. [tenth chapter title]"""
 
     else:  # evergreen
-        system_prompt = f"""You are a search query expert. Generate {settings.QUERY_PRODUCE_PER_TOPIC} diverse, comprehensive search queries for researching this evergreen topic.
+        system_prompt = f"""You are a search query expert and podcast content planner. Your task has two parts:
 
 Topic: {topic}
 Current Date: {current_date}
+
+PART 1 - SEARCH QUERIES:
+Generate {settings.QUERY_PRODUCE_PER_TOPIC} diverse, comprehensive search queries for researching this evergreen topic.
 
 Generate queries that:
 1. Cover foundational concepts, mechanisms, applications, debates
@@ -178,22 +205,71 @@ Generate queries that:
 3. Cover historical context and current state
 4. Are specific and will return authoritative sources
 
-Return ONLY a numbered list of {settings.QUERY_PRODUCE_PER_TOPIC} queries, one per line."""
+PART 2 - CHAPTER TITLES:
+Based on the topic, suggest 10 compelling chapter titles for a podcast episode. These should represent key aspects, themes, or segments that would make for engaging podcast content.
+
+FORMAT YOUR RESPONSE EXACTLY AS FOLLOWS:
+
+QUERIES:
+1. [first query]
+2. [second query]
+...
+{settings.QUERY_PRODUCE_PER_TOPIC}. [last query]
+
+CHAPTER_TITLES:
+1. [first chapter title]
+2. [second chapter title]
+...
+10. [tenth chapter title]"""
 
     response = llm.invoke([SystemMessage(content=system_prompt)])
 
-    # Parse queries
+    # Parse response into queries and chapter titles sections
+    response_text = response.content
+
+    # Split response into sections
     queries = []
-    for line in response.content.split("\n"):
-        line = line.strip()
-        if line and any(line.startswith(f"{i}.") for i in range(1, settings.QUERY_PRODUCE_PER_TOPIC + 1)):
-            # Remove number prefix and surrounding quotes
-            query_text = line.split(".", 1)[1].strip().strip('"\'')
-            queries.append({"query": query_text, "date_filter": None})
+    chapter_titles = []
 
+    # Find QUERIES and CHAPTER_TITLES sections
+    lines = response_text.split("\n")
+    current_section = None
+
+    for line in lines:
+        line_stripped = line.strip()
+
+        # Check for section headers
+        if "QUERIES:" in line_stripped.upper():
+            current_section = "queries"
+            continue
+        elif "CHAPTER_TITLES:" in line_stripped.upper() or "CHAPTER TITLES:" in line_stripped.upper():
+            current_section = "chapter_titles"
+            continue
+
+        # Parse numbered items based on current section
+        if current_section == "queries" and line_stripped:
+            # Check if line starts with a number (1. to 15.)
+            if any(line_stripped.startswith(f"{i}.") for i in range(1, settings.QUERY_PRODUCE_PER_TOPIC + 1)):
+                query_text = line_stripped.split(".", 1)[1].strip().strip('"\'')
+                queries.append({"query": query_text, "date_filter": None})
+
+        elif current_section == "chapter_titles" and line_stripped:
+            # Check if line starts with a number (1. to 10.)
+            if any(line_stripped.startswith(f"{i}.") for i in range(1, 11)):
+                title_text = line_stripped.split(".", 1)[1].strip().strip('"\'')
+                chapter_titles.append(title_text)
+
+    # Store results in state
     state["queries"] = queries[:settings.QUERY_PRODUCE_PER_TOPIC]  # Use setting value
+    state["chapter_titles"] = chapter_titles[:10]  # Keep exactly 10 chapter titles
 
-    print(f"✅ Generated {len(state['queries'])} queries\n")
+    print(f"✅ Generated {len(state['queries'])} queries")
+    print(f"✅ Generated {len(state['chapter_titles'])} chapter titles")
+    if state["chapter_titles"]:
+        print(f"\n📚 CHAPTER TITLES:")
+        for i, title in enumerate(state["chapter_titles"], 1):
+            print(f"   {i}. {title}")
+    print()
 
     return state
 
@@ -309,6 +385,30 @@ def merge_texts_node(state: Phase1State) -> Phase1State:
     return state
 
 
+def dedup_and_rank_node(state: Phase1State) -> Phase1State:
+    """Deduplicate and rank chunks (pure in-memory processing)."""
+    from src.agents.phase1.dedup_relevance_scorer import process
+
+    print("\n🔬 DEDUP & RELEVANCE SCORING")
+    print(f"   Input: {len(state['merged_research_text'])} characters\n")
+
+    result = process(
+        merged_text=state["merged_research_text"],
+        topic=state["topic"],
+        scraped_pages=state["scraped_pages"]
+    )
+
+    state["ranked_chunks"] = result["ranked_chunks"]
+    state["dedup_stats"] = result["stats"]
+
+    stats = result["stats"]
+    print(f"   ✅ Total chunks: {stats['total_chunks']}")
+    print(f"   🔄 Duplicates removed: {stats['duplicates_removed']}")
+    print(f"   ⭐ Top-K selected: {stats['top_k_selected']}\n")
+
+    return state
+
+
 # ==================== ROUTING ====================
 
 def route_scrape_quality(state: Phase1State) -> str:
@@ -348,7 +448,7 @@ def create_phase1_graph():
     4. date_tagging -> execute_searches
     5. scrape_pages -> evaluate_scrape_quality
     6. If >30% fail & retries<3: loop back to generate_queries
-    7. Otherwise: merge_texts -> END
+    7. Otherwise: merge_texts -> dedup_and_rank -> END
 
     Returns:
         CompiledGraph: Ready-to-run Phase 1 subgraph
@@ -366,6 +466,7 @@ def create_phase1_graph():
     workflow.add_node("scrape_pages", scrape_pages_node)
     workflow.add_node("evaluate_scrape_quality", evaluate_scrape_quality_node)
     workflow.add_node("merge_texts", merge_texts_node)
+    workflow.add_node("dedup_and_rank", dedup_and_rank_node)
 
     # Define edges
     workflow.set_entry_point("initialize")
@@ -401,6 +502,8 @@ def create_phase1_graph():
         }
     )
 
-    workflow.add_edge("merge_texts", END)
+    # Final processing: merge -> dedup+rank -> END
+    workflow.add_edge("merge_texts", "dedup_and_rank")
+    workflow.add_edge("dedup_and_rank", END)
 
     return workflow.compile()

@@ -46,7 +46,16 @@ class Settings(BaseSettings):
     WEB_SCRAPER_MAX_WORKERS: int = 50
     WEB_SCRAPER_TIMEOUT: int = 15  # seconds per request
     LINK_FAILURE_THRESHOLD: float = 0.3  # 30% failure triggers query rewrite
-    MAX_QUERY_REWRITE_ATTEMPTS: int = 2
+    MAX_QUERY_REWRITE_ATTEMPTS: int = 0
+
+    # Dedup + Relevance Scorer Settings (Phase 1)
+    CHUNK_SIZE: int = 500  # words per chunk
+    CHUNK_OVERLAP: int = 50  # word overlap between chunks
+    SIMILARITY_THRESHOLD: float = 0.85  # cosine similarity threshold for dedup
+    TOP_K_CHUNKS: int = 60  # Keep top 50-80 chunks (60 for 6-8 chapters)
+    EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"  # Local sentence-transformers model
+    RERANKER_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"  # Cross-encoder for relevance
+    MIN_CHUNK_WORDS: int = 200  # Minimum words in extracted text to keep chunk
 
     class Config:
         env_file = ".env"

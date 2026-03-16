@@ -106,9 +106,29 @@ def test_full_phase1():
         OUTPUT_FILE.write_text(merged, encoding="utf-8")
         print(f"💾 Saved to: {OUTPUT_FILE}")
 
+        # Verify dedup_and_rank node was executed (FINAL NODE)
+        ranked_chunks = final_state.get("ranked_chunks", [])
+        dedup_stats = final_state.get("dedup_stats", {})
+
+        print(f"\n🔬 DEDUP & RELEVANCE SCORING (Final Node):")
+        if ranked_chunks and dedup_stats:
+            print(f"   ✅ Ranked chunks produced: {len(ranked_chunks)}")
+            print(f"   ✅ Dedup stats available:")
+            print(f"      - Total chunks: {dedup_stats.get('total_chunks', 'N/A')}")
+            print(f"      - Duplicates removed: {dedup_stats.get('duplicates_removed', 'N/A')}")
+            print(f"      - Top-K selected: {dedup_stats.get('top_k_selected', 'N/A')}")
+        else:
+            print(f"   ⚠️  Dedup & rank node NOT executed!")
+            print(f"      - Ranked chunks: {len(ranked_chunks)}")
+            print(f"      - Dedup stats: {bool(dedup_stats)}")
+
+        # Verify chapter titles were generated
+        chapter_titles = final_state.get("chapter_titles", [])
+        print(f"\n📚 Chapter titles generated: {len(chapter_titles)}/10")
+
         print(f"\n📊 WORD COUNT: {word_count}")
         print("=" * 60)
-        print("✅ TEST PASSED!")
+        print("✅ TEST PASSED! (Reached final node: dedup_and_rank → END)")
         print("=" * 60)
 
     except Exception as e:

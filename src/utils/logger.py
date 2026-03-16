@@ -30,5 +30,8 @@ def setup_logger(name: str = "podcast_generator", level: int = logging.INFO) -> 
     return logger
 
 
+# Alias for compatibility
+get_logger = setup_logger
+
 # Default logger
 logger = setup_logger()

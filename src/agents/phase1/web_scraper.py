@@ -36,14 +36,20 @@ MIN_CONTENT_LENGTH = 300
 
 @contextmanager
 def suppress_stderr():
-    """Context manager to suppress stderr output (for noisy libraries like boilerpy3)."""
-    stderr = sys.stderr
+    """Context manager to suppress stderr output (for noisy libraries like boilerpy3).
+    
+    Uses file descriptor level redirection to be thread-safe.
+    """
+    stderr_fd = sys.stderr.fileno()
+    saved_fd = os.dup(stderr_fd)
     try:
-        sys.stderr = open(os.devnull, 'w')
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, stderr_fd)
+        os.close(devnull)
         yield
     finally:
-        sys.stderr.close()
-        sys.stderr = stderr
+        os.dup2(saved_fd, stderr_fd)
+        os.close(saved_fd)
 
 
 def is_deep_page(url: str) -> bool:

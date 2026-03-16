@@ -18,7 +18,8 @@ class QueryProducerOutput(BaseModel):
 
     topic: str = Field(..., description="Original topic")
     freshness: Literal["recent", "evergreen"] = Field(..., description="Topic freshness classification")
-    queries: List[SearchQuery] = Field(..., description="List of 10 search queries")
+    queries: List[SearchQuery] = Field(..., description="List of 15 search queries")
+    chapter_titles: List[str] = Field(default_factory=list, description="List of 10 suggested chapter titles for stage 2")
     seed_context: str | None = Field(None, description="Context from seed search (if recent topic)")
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
 

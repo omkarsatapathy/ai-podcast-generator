@@ -128,13 +128,13 @@ class QueryProducerAgent:
 
     def run(self, topic: str) -> QueryProducerOutput:
         """
-        Generate 10 diverse search queries for the given topic.
+        Generate 15 diverse search queries and 10 chapter titles for the given topic.
 
         Args:
             topic: The topic to research
 
         Returns:
-            QueryProducerOutput with 10 search queries
+            QueryProducerOutput with 15 search queries and 10 chapter titles
         """
         # Initialize state
         initial_state = {
@@ -144,7 +144,8 @@ class QueryProducerAgent:
             "seed_context": "",
             "queries": [],
             "current_date": "",
-            "messages": []
+            "messages": [],
+            "chapter_titles": []
         }
 
         # Run the graph
@@ -164,6 +165,7 @@ class QueryProducerAgent:
             topic=topic,
             freshness=final_state["freshness"],
             queries=queries,
+            chapter_titles=final_state.get("chapter_titles", []),
             seed_context=final_state.get("seed_context", "")
         )
 
