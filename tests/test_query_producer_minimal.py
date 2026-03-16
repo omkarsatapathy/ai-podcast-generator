@@ -57,7 +57,10 @@ def test_full_phase1():
 
         graph = create_phase1_graph()
 
-        test_topic = "the AGI in future"
+
+        test_topic = "why Gold price is falling, and the priec forecast by end of year"
+
+
         print(f"🔬 Testing with topic: '{test_topic}'")
         print("⏳ Running full Phase 1 (queries → search → scrape → merge)...\n")
 

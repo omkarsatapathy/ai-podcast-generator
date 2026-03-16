@@ -150,7 +150,7 @@ def generate_queries_node(state: Phase1State) -> Phase1State:
     print(f"🤖 GENERATING QUERIES using LLM (freshness: {freshness})...\n")
 
     if freshness == "recent":
-        system_prompt = f"""You are a search query expert. Generate 10 diverse, specific search queries for researching this recent topic.
+        system_prompt = f"""You are a search query expert. Generate {settings.QUERY_PRODUCE_PER_TOPIC} diverse, specific search queries for researching this recent topic.
 
 Topic: {topic}
 Current Date: {current_date}
@@ -164,10 +164,10 @@ Generate queries that:
 3. Are specific and factual
 4. Will return high-quality sources
 
-Return ONLY a numbered list of 10 queries, one per line."""
+Return ONLY a numbered list of {settings.QUERY_PRODUCE_PER_TOPIC} queries, one per line."""
 
     else:  # evergreen
-        system_prompt = f"""You are a search query expert. Generate 10 diverse, comprehensive search queries for researching this evergreen topic.
+        system_prompt = f"""You are a search query expert. Generate {settings.QUERY_PRODUCE_PER_TOPIC} diverse, comprehensive search queries for researching this evergreen topic.
 
 Topic: {topic}
 Current Date: {current_date}
@@ -186,12 +186,12 @@ Return ONLY a numbered list of {settings.QUERY_PRODUCE_PER_TOPIC} queries, one p
     queries = []
     for line in response.content.split("\n"):
         line = line.strip()
-        if line and any(line.startswith(f"{i}.") for i in range(1, 11)):
+        if line and any(line.startswith(f"{i}.") for i in range(1, settings.QUERY_PRODUCE_PER_TOPIC + 1)):
             # Remove number prefix and surrounding quotes
             query_text = line.split(".", 1)[1].strip().strip('"\'')
             queries.append({"query": query_text, "date_filter": None})
 
-    state["queries"] = queries[:settings.QUERY_PRODUCE_PER_TOPIC]  # Ensure exactly 10
+    state["queries"] = queries[:settings.QUERY_PRODUCE_PER_TOPIC]  # Use setting value
 
     print(f"✅ Generated {len(state['queries'])} queries\n")
 
