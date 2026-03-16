@@ -1,0 +1,41 @@
+[project]
+name = "podcast-creator"
+version = "0.1.0"
+description = "A podcast creation tool"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi==0.109.0",
+    "uvicorn[standard]==0.27.0",
+    "pydantic==2.5.3",
+    "pydantic-settings==2.1.0",
+    "httpx==0.26.0",
+    "aiofiles==23.2.1",
+    "python-multipart==0.0.6",
+    "python-dotenv==1.0.0",
+    # LangChain & LangGraph
+    "langchain>=0.1.0",
+    "langchain-openai>=0.0.5",
+    "langgraph>=0.0.20",
+    "langchain-core>=0.1.0",
+    # LLM Providers
+    "openai>=1.10.0",
+    # Web Search & Extraction
+    "google-api-python-client>=2.100.0",
+    "trafilatura>=1.6.0",
+    # Embeddings & Vector Store
+    "sentence-transformers>=2.2.0",
+    "faiss-cpu>=1.7.4",
+    # Audio Processing
+    "pydub>=0.25.1",
+    # Utils
+    "beautifulsoup4>=4.12.0",
+    "lxml>=4.9.0",
+]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*", "config*"]
