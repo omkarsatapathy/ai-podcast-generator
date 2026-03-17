@@ -50,22 +50,39 @@ except Exception as e:
     errors.append(f"Phase 3 import: {e}")
     print(f"  FAIL Phase 3 imports: {e}")
 
+# Phase 4
+try:
+    from src.agents.phase4.tts_router import (
+        audio_qc_and_repair,
+        execute_parallel_synthesis,
+        plan_tts_jobs,
+        resolve_voice_policy,
+        route_tts_jobs,
+        validate_phase4_input_contract,
+    )
+    print("  OK  Phase 4 imports")
+except Exception as e:
+    errors.append(f"Phase 4 import: {e}")
+    print(f"  FAIL Phase 4 imports: {e}")
+
 # Graph compilation
 try:
-    from src.pipeline.phases import create_phase1_graph, create_phase2_graph, create_phase3_graph
+    from src.pipeline.phases import create_phase1_graph, create_phase2_graph, create_phase3_graph, create_phase4_graph
     create_phase1_graph()
     print("  OK  Phase 1 graph compiled")
     create_phase2_graph()
     print("  OK  Phase 2 graph compiled")
     create_phase3_graph()
     print("  OK  Phase 3 graph compiled")
+    create_phase4_graph()
+    print("  OK  Phase 4 graph compiled")
 except Exception as e:
     errors.append(f"Graph compilation: {e}")
     print(f"  FAIL Graph compilation: {e}")
 
 # Cache logic
 try:
-    from test_phase3_cached import save_cache, load_cache, get_cache_path
+    from tests.test_graph_with_cached import save_phase_state, load_phase_state, find_latest_cached_phase
     print("  OK  Cache functions")
 except Exception as e:
     errors.append(f"Cache import: {e}")

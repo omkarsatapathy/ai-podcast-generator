@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     # File Paths
     BASE_DIR: Path = Path(__file__).parent.parent
     DATA_DIR: Path = BASE_DIR / "data"
+    AUDIO_DIR: Path = DATA_DIR / "audio"
     OUTPUT_DIR: Path = DATA_DIR / "output"
     TEMP_DIR: Path = DATA_DIR / "temp"
 
@@ -87,7 +88,43 @@ class Settings(BaseSettings):
 
     # TTS Provider: "google" or "elevenlabs" — switch on the fly
     TTS_PROVIDER: str = "google"
+    TTS_FALLBACK_PROVIDER: str = ""
     ELEVENLABS_API_KEY: str = ""
+    GOOGLE_TTS_MODEL: str = "gemini-2.5-pro-preview-tts"
+    ELEVENLABS_TTS_MODEL: str = "eleven_v3"
+    PHASE4_RAW_AUDIO_DIR: Path = AUDIO_DIR / "raw"
+    PHASE4_MAX_WORKERS: int = 1
+    PHASE4_MAX_RETRIES: int = 3
+    PHASE4_REQUEST_TIMEOUT_SECONDS: int = 60
+    PHASE4_RETRY_BASE_SECONDS: float = 10.0
+    PHASE4_MIN_REQUEST_GAP_SECONDS: float = 3.0  # min seconds between API calls
+    PHASE4_MAX_TEXT_CHARS_PER_JOB: int = 1200
+    PHASE4_DEFAULT_TURN_GAP_SECONDS: float = 0.2
+    PHASE4_MIN_DURATION_SECONDS: float = 0.15
+    PHASE4_SILENCE_PEAK_THRESHOLD: int = 64
+    PHASE4_CLIPPING_SAMPLE_THRESHOLD: int = 32760
+    PHASE4_CLIPPING_RATIO_THRESHOLD: float = 0.01
+    PHASE4_TARGET_SAMPLE_RATE: int = 24000
+    PHASE4_TARGET_CHANNELS: int = 1
+    PHASE4_MAX_FAILURE_RATIO: float = 0.02  # fraction of clips allowed to fail before blocking Phase 5 (0.0 = strict)
+    GOOGLE_TTS_ALLOWED_VOICES: tuple[str, ...] = (
+        "Aoede",
+        "Charon",
+        "Puck",
+        "Kore",
+        "Fenrir",
+        "Leda",
+        "Enceladus",
+        "Vindemiatrix",
+        "Zubenelgenubi",
+        "Zephyr",
+    )
+    GOOGLE_TTS_HOST_VOICE: str = "Aoede"
+    GOOGLE_TTS_EXPERT_VOICE: str = "Charon"
+    GOOGLE_TTS_SKEPTIC_VOICE: str = "Kore"
+    ELEVENLABS_HOST_VOICE_ID: str = ""
+    ELEVENLABS_EXPERT_VOICE_ID: str = ""
+    ELEVENLABS_SKEPTIC_VOICE_ID: str = ""
 
     class Config:
         env_file = ".env"
@@ -98,5 +135,7 @@ settings = Settings()
 
 # Ensure directories exist
 settings.DATA_DIR.mkdir(parents=True, exist_ok=True)
+settings.AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 settings.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 settings.TEMP_DIR.mkdir(parents=True, exist_ok=True)
+settings.PHASE4_RAW_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
