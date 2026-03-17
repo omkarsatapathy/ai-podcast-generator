@@ -27,8 +27,8 @@ def _apply_rule_based_markers(utterances: List[Dict], energy_level: str) -> List
         if text.strip().endswith("?") and utt["intent"] == "question":
             text += " [PAUSE:short]"
 
-        # Self-continuation filler
-        if i > 0 and utterances[i - 1]["speaker"] == utt["speaker"] and random.random() < 0.4:
+        # Self-continuation filler (20% chance — reduced to avoid over-use)
+        if i > 0 and utterances[i - 1]["speaker"] == utt["speaker"] and random.random() < 0.2:
             text = "[FILLER:thinking] " + text
 
         # High energy + long utterance → fast pacing for first third

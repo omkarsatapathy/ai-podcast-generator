@@ -8,7 +8,7 @@ from typing import List, Dict
 from langchain_openai import ChatOpenAI
 
 from config.settings import settings
-from src.llm.prompts import DIALOGUE_BEAT_PROMPT, EXPERT_EXPANSION_PROMPT, BEAT_OBJECTIVES
+from src.llm.prompts import DIALOGUE_BEAT_PROMPT, OPENING_BEAT_PROMPT, EXPERT_EXPANSION_PROMPT, BEAT_OBJECTIVES
 from src.models.dialogue import BeatDialogue
 from src.utils.logger import get_logger
 
@@ -16,6 +16,7 @@ logger = get_logger(__name__)
 
 # Target metrics per beat (~2.5 words/second speaking rate)
 BEAT_CONFIG = {
+    0: {"name": "OPENING", "target_words": 120, "target_utterances": 8},
     1: {"name": "HOOK", "target_words": 50, "target_utterances": 4},
     2: {"name": "CONTEXT", "target_words": 180, "target_utterances": 10},
     3: {"name": "DEEP_DIVE", "target_words": 250, "target_utterances": 15},
@@ -139,13 +140,93 @@ def _generate_beat(
     }]
 
 
+def _generate_opening_beat(
+    chapter: Dict, personas: List[Dict], topic: str,
+) -> List[Dict]:
+    """Generate Beat 0 (OPENING) for Chapter 1: host welcome, guest intros, warm-up."""
+    config = BEAT_CONFIG[0]
+    characters_text = _build_characters_text(personas)
+
+    # Build a persona summary for the prompt
+    persona_intros = []
+    for p in personas:
+        persona_intros.append(
+            f"- {p['name']} ({p['role']}): expertise in {p.get('expertise_area', 'the topic')}. "
+            f"Style: {p['speaking_style']}"
+        )
+    personas_detail = "\n".join(persona_intros)
+
+    prompt = OPENING_BEAT_PROMPT.format(
+        topic=topic,
+        chapter_title=chapter["title"],
+        characters_text=characters_text,
+        personas_detail=personas_detail,
+        target_words=config["target_words"],
+        target_utterances=config["target_utterances"],
+    )
+
+    llm = _get_llm().with_structured_output(BeatDialogue)
+    persona_map = {p["name"]: p for p in personas}
+
+    for attempt in range(3):
+        try:
+            result: BeatDialogue = llm.invoke(prompt)
+            utterances = []
+            for i, u in enumerate(result.utterances):
+                persona = persona_map.get(u.speaker, {})
+                utterances.append({
+                    "utterance_id": f"ch{chapter['chapter_number']}_b0_u{i+1:03d}",
+                    "speaker": u.speaker,
+                    "role": persona.get("role", "unknown"),
+                    "beat": 0,
+                    "text_clean": u.text,
+                    "text_with_naturalness": "",
+                    "text_ssml": "",
+                    "intent": u.intent,
+                    "emotion": u.emotion,
+                    "grounding_chunk_ids": [],
+                    "estimated_duration_seconds": len(u.text.split()) / 2.5,
+                    "tts_voice_id": persona.get("tts_voice_id", ""),
+                    "audio_metadata": {},
+                })
+            return utterances
+        except Exception as e:
+            logger.warning(f"Opening beat attempt {attempt+1} failed: {e}")
+
+    # Fallback: minimal welcome
+    host = next((p for p in personas if p["role"] == "host"), personas[0])
+    return [{
+        "utterance_id": f"ch{chapter['chapter_number']}_b0_u001",
+        "speaker": host["name"], "role": "host", "beat": 0,
+        "text_clean": f"Welcome everyone! Today we're diving into {topic}. Let's get started.",
+        "text_with_naturalness": "", "text_ssml": "",
+        "intent": "summary", "emotion": "excited",
+        "grounding_chunk_ids": [], "estimated_duration_seconds": 5.0,
+        "tts_voice_id": host.get("tts_voice_id", ""), "audio_metadata": {},
+    }]
+
+
 def generate_chapter_dialogue(
     chapter: Dict, personas: List[Dict], ranked_chunks: List[Dict],
+    topic: str = "",
 ) -> List[Dict]:
-    """Generate all 5 beats of dialogue for a chapter."""
+    """Generate all beats of dialogue for a chapter.
+
+    For Chapter 1, prepends Beat 0 (OPENING) with host welcome,
+    guest introductions, and warm-up conversation.
+    """
     source_chunks = _get_chapter_source_chunks(chapter, ranked_chunks)
     all_utterances = []
     beat_history = []
+
+    # Beat 0 (OPENING) — only for the first chapter
+    if chapter.get("chapter_number") == 1:
+        logger.info(f"Chapter {chapter['chapter_number']} - Beat 0 (OPENING)")
+        opening = _generate_opening_beat(chapter, personas, topic)
+        all_utterances.extend(opening)
+        beat_history.append([
+            {"speaker": u["speaker"], "text": u["text_clean"]} for u in opening
+        ])
 
     for beat_num in range(1, 6):
         logger.info(f"Chapter {chapter['chapter_number']} - Beat {beat_num}")

@@ -119,6 +119,7 @@ Make each character feel like a real person a listener would recognize and remem
 # ==================== PHASE 3: DIALOGUE GENERATION ====================
 
 BEAT_OBJECTIVES = {
+    0: "OPENING (30-50s): The host warmly welcomes listeners, introduces each guest by name and expertise, briefly previews the topic, and has a short warm-up exchange. This sets the tone and lets the audience know who they're listening to.",
     1: "HOOK (15-30s): Open with a provocative statement, surprising fact, or compelling question. The host grabs attention and creates immediate curiosity.",
     2: "CONTEXT BUILDING (60-90s): Frame the topic. Expert provides necessary background. Host asks clarifying questions on behalf of the listener.",
     3: "DEEP DIVE + TENSION (90-120s): Core content. Expert explains in detail. Skeptic challenges claims and raises counterpoints. Create intellectual tension through respectful disagreement. Dynamic multi-speaker conversation, NOT a monologue.",
@@ -152,6 +153,38 @@ Generate dialogue for **Beat {beat_number}** ({beat_name}) of Chapter {chapter_n
 - Each character speaks in their unique style consistently
 - No meta-commentary like "(laughs)" or "[pauses]" — just spoken words
 - Match the {energy_level} energy level in pacing and enthusiasm"""
+
+
+OPENING_BEAT_PROMPT = """You are an expert podcast dialogue writer. Generate the OPENING segment for a podcast episode.
+
+This is **Beat 0 (OPENING)** — the very first thing listeners hear after the intro music. It must:
+1. The host warmly WELCOMES the audience to the show.
+2. The host INTRODUCES each guest by name and briefly mentions their expertise/background.
+3. The host gives a SHORT PREVIEW of today's topic — what they'll explore and why it matters.
+4. A brief WARM-UP exchange: guests react to the topic preview, share initial excitement or a quick personal anecdote related to the topic. This should feel natural and conversational, like real people settling into a discussion.
+
+## Topic
+{topic}
+
+## First Chapter
+"{chapter_title}"
+
+## Characters
+{characters_text}
+
+## Character Details (for introductions)
+{personas_detail}
+
+## Rules
+- Target ~{target_words} words across ~{target_utterances} utterances
+- The host MUST speak first — welcoming listeners
+- The host MUST introduce each non-host character by name and role/expertise
+- After introductions, have a 2-3 utterance warm-up exchange where characters react naturally
+- Keep it warm, energetic, and conversational — NOT scripted or stiff
+- No meta-commentary like "(laughs)" or "[pauses]" — just spoken words
+- Every character should speak at least once during the opening
+- Do NOT dive into the actual content yet — this is just the welcome and setup
+- The opening should make a new listener feel oriented: who are these people, and what are we about to discuss?"""
 
 
 EXPERT_EXPANSION_PROMPT = """Expand this brief expert podcast utterance to ~{target_words} words with more depth, examples, or context. Keep the conversational tone.
@@ -197,7 +230,7 @@ Available markers:
 - [LAUGH:light] — after humor
 - [FALSE_START] — before nuanced points
 
-Rules: Max 1-2 markers for <20 words, 2-4 for 20-50, 4-6 for >50. Casual speakers get more fillers; technical speakers get more pauses. No laugh during serious content.
+Rules: Max 1-2 markers for <20 words, 2-4 for 20-50, 4-6 for >50. Use at most 1 filler ([FILLER:thinking] or [FILLER:agreement]) per utterance — never two fillers in a row. Casual speakers get occasional fillers; technical speakers get more pauses. No laugh during serious content.
 
 Return ONLY the enhanced text with markers inserted."""
 

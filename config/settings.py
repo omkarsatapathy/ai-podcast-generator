@@ -27,7 +27,9 @@ class Settings(BaseSettings):
     # File Paths
     BASE_DIR: Path = Path(__file__).parent.parent
     DATA_DIR: Path = BASE_DIR / "data"
+    CACHE_DIR: Path = DATA_DIR / "cache"
     AUDIO_DIR: Path = DATA_DIR / "audio"
+    INPUT_DIR: Path = DATA_DIR / "input"
     OUTPUT_DIR: Path = DATA_DIR / "output"
     TEMP_DIR: Path = DATA_DIR / "temp"
 
@@ -35,6 +37,7 @@ class Settings(BaseSettings):
     MIN_PODCAST_DURATION_SEC: int = 900  # 15 minutes
     MAX_PODCAST_DURATION_SEC: int = 1800  # 30 minutes
     NUM_SPEAKERS: int = 2
+    PHASE4_SYNTHESIS_MINUTES_CAP: float = 15.0  # Max minutes of dialogue to synthesise per run
 
     #Google Web search settings
     SEARCH_RESULTS_PER_QUERY: int = 10
@@ -182,8 +185,9 @@ class Settings(BaseSettings):
 settings = Settings()
 
 # Ensure directories exist
-settings.DATA_DIR.mkdir(parents=True, exist_ok=True)
-settings.AUDIO_DIR.mkdir(parents=True, exist_ok=True)
-settings.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-settings.TEMP_DIR.mkdir(parents=True, exist_ok=True)
-settings.PHASE4_RAW_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+for _dir in (
+    settings.DATA_DIR, settings.CACHE_DIR, settings.AUDIO_DIR,
+    settings.INPUT_DIR, settings.OUTPUT_DIR, settings.TEMP_DIR,
+    settings.PHASE4_RAW_AUDIO_DIR,
+):
+    _dir.mkdir(parents=True, exist_ok=True)

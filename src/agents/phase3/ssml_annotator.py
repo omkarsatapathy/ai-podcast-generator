@@ -33,6 +33,9 @@ def _convert_to_ssml(text: str) -> Tuple[str, Dict]:
     text = text.replace("[PAUSE:short]", '<break time="400ms"/>')
     text = text.replace("[PAUSE:long]", '<break time="800ms"/>')
 
+    # Remove consecutive duplicate filler markers before conversion
+    text = re.sub(r'(\[FILLER:\w+\])(\s*\1)+', r'\1', text)
+
     # Fillers
     text = text.replace("[FILLER:thinking]", '<break time="300ms"/>um,')
     text = text.replace("[FILLER:agreement]", "yeah,")
@@ -75,6 +78,9 @@ def _convert_to_plaintext(text: str) -> Tuple[str, Dict]:
     m = re.search(r'\[BACKCHANNEL:(\w+)\]', text)
     if m:
         meta["backchannel_speaker"] = m.group(1)
+
+    # Remove consecutive duplicate filler markers before conversion
+    text = re.sub(r'(\[FILLER:\w+\])(\s*\1)+', r'\1', text)
 
     # Convert fillers to spoken text
     text = text.replace("[FILLER:thinking]", "um,")

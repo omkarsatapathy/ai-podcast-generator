@@ -39,6 +39,7 @@ def dialogue_engine_node(state: Phase3State) -> Phase3State:
         print(f"   Generating Chapter {ch['chapter_number']}: {ch['title']}")
         utts = generate_chapter_dialogue(
             ch, state["character_personas"], state["ranked_chunks"],
+            topic=state.get("topic", ""),
         )
         chapter_dialogues.append({
             "chapter_number": ch["chapter_number"],
