@@ -6,7 +6,7 @@ from pathlib import Path
 class Settings(BaseSettings):
     """Application settings."""
     #LLM settings
-    QUERY_PRODUCER_MODEL: str = "gpt-4o"
+    QUERY_PRODUCER_MODEL: str = "gpt-4o-mini"
     QUERY_PRODUCER_TEMPERATURE: float = 0.9
 
     # API Settings
@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     MIN_CHUNK_WORDS: int = 200  # Minimum words in extracted text to keep chunk
 
     # Phase 2: Chapter Planner Settings
-    CHAPTER_PLANNER_MODEL: str = "gpt-5.1"
+    CHAPTER_PLANNER_MODEL: str = "gpt-4o-mini"
     CHAPTER_PLANNER_TEMPERATURE: float = 0.7
     CHAPTER_PLANNER_BATCH_SIZE: int = 5
     MIN_CHAPTERS: int = 6
@@ -73,19 +73,19 @@ class Settings(BaseSettings):
     CLUSTER_SIMILARITY_THRESHOLD: float = 0.45
 
     # Phase 2: Character Designer Settings
-    CHARACTER_DESIGNER_MODEL: str = "gpt-5.1"
+    CHARACTER_DESIGNER_MODEL: str = "gpt-5.4-mini"
     CHARACTER_DESIGNER_TEMPERATURE: float = 0.8
 
     # Phase 3: Dialogue Generation Settings
-    DIALOGUE_ENGINE_MODEL: str = "gpt-4o"
+    DIALOGUE_ENGINE_MODEL: str = "gpt-5.4-nano"
     DIALOGUE_ENGINE_TEMPERATURE: float = 0.8
-    EXPERT_EXPANDER_MODEL: str = "gpt-4o"
+    EXPERT_EXPANDER_MODEL: str = "gpt-5.4-nano"
     EXPERT_EXPANDER_TEMPERATURE: float = 0.7
-    NATURALNESS_MODEL: str = "gpt-4o"
+    NATURALNESS_MODEL: str = "gpt-5.4-nano"
     NATURALNESS_TEMPERATURE: float = 0.6
     FACT_CHECKER_MODEL: str = "gpt-4o-mini"
     FACT_CHECKER_TEMPERATURE: float = 0.1
-    QA_REVIEWER_MODEL: str = "gpt-4o"
+    QA_REVIEWER_MODEL: str = "gpt-5.4-nano"
     QA_REVIEWER_TEMPERATURE: float = 0.3
     PHASE3_MAX_RETRIES: int = 2
 
@@ -167,7 +167,7 @@ class Settings(BaseSettings):
     # Cold Open
     PHASE5_COLD_OPEN_MIN_MS: int = 12000
     PHASE5_COLD_OPEN_MAX_MS: int = 25000
-    PHASE5_COLD_OPEN_LLM_MODEL: str = "claude-haiku-4-5-20251001"
+    PHASE5_COLD_OPEN_LLM_MODEL: str = "gpt-5.4-nano"
 
     # Chapter Stitcher
     PHASE5_INTRO_MUSIC_DURATION_MS: int = 8000
