@@ -114,3 +114,121 @@ The host is the engine of the conversation — not a passive moderator. Their pe
 - disagreement_style must describe HOW the host challenges without being combative — e.g. playing confused listener, asking for concrete examples.
 
 Make each character feel like a real person a listener would recognize and remember."""
+
+
+# ==================== PHASE 3: DIALOGUE GENERATION ====================
+
+BEAT_OBJECTIVES = {
+    1: "HOOK (15-30s): Open with a provocative statement, surprising fact, or compelling question. The host grabs attention and creates immediate curiosity.",
+    2: "CONTEXT BUILDING (60-90s): Frame the topic. Expert provides necessary background. Host asks clarifying questions on behalf of the listener.",
+    3: "DEEP DIVE + TENSION (90-120s): Core content. Expert explains in detail. Skeptic challenges claims and raises counterpoints. Create intellectual tension through respectful disagreement. Dynamic multi-speaker conversation, NOT a monologue.",
+    4: "AHA MOMENT (30-60s): Someone offers an analogy or simplification that crystallizes the concept. Host reacts with a clear 'aha' moment. This is the memorable takeaway.",
+    5: 'WRAP + TRANSITION (15-30s): Host summarizes the key point in 1-2 sentences. Tease next chapter: "{transition_hook}". Create forward momentum.',
+}
+
+DIALOGUE_BEAT_PROMPT = """You are an expert podcast dialogue writer. Generate natural, engaging multi-speaker dialogue.
+
+Generate dialogue for **Beat {beat_number}** ({beat_name}) of Chapter {chapter_number}: "{chapter_title}".
+
+## Chapter Info
+- Act: {act} | Energy Level: {energy_level}
+- Key Points: {key_points}
+
+## Characters
+{characters_text}
+
+## Beat Objective
+{beat_objective}
+
+{previous_beats_text}
+
+## Source Material (ground ALL factual claims here)
+{source_chunks_text}
+
+## Rules
+- Target ~{target_words} words across ~{target_utterances} utterances
+- Every factual claim MUST reference source chunks via grounding_chunk_ids
+- Natural conversation flow — characters build on each other's points
+- Each character speaks in their unique style consistently
+- No meta-commentary like "(laughs)" or "[pauses]" — just spoken words
+- Match the {energy_level} energy level in pacing and enthusiasm"""
+
+
+EXPERT_EXPANSION_PROMPT = """Expand this brief expert podcast utterance to ~{target_words} words with more depth, examples, or context. Keep the conversational tone.
+
+Speaker: {speaker_name} ({vocabulary_level} vocabulary)
+Style: {speaking_style}
+Original ({current_words} words): "{original_text}"
+
+Context before: "{previous_text}"
+Context after: "{next_text}"
+Chapter key points: {key_points}
+
+Source material for grounding:
+{source_text}
+
+Rules:
+- Add depth without changing the core message
+- Keep it spoken and conversational, not academic
+- The next utterance must still make sense after expansion
+- Stay grounded in source material
+
+Return ONLY the expanded text."""
+
+
+NATURALNESS_INJECTION_PROMPT = """Add naturalness markers to this podcast utterance to make it sound like spontaneous speech.
+
+Speaker: {speaker_name} ({role}, {vocabulary_level})
+Style: {speaking_style}
+Text: "{text}"
+Intent: {intent} | Emotion: {emotion} | Beat: {beat} | Energy: {energy_level}
+
+Previous: "{previous_text}"
+Next: "{next_text}"
+
+Available markers:
+- [FILLER:thinking] — "um," before complex statements
+- [FILLER:agreement] — "yeah," at start of responses
+- [PAUSE:short] — 400ms after questions, before lists
+- [PAUSE:long] — 800ms before revelations
+- [EMPHASIS:word] — stress key terms, stats
+- [PACE:fast] — excited, listing things
+- [PACE:slow] — important conclusions
+- [LAUGH:light] — after humor
+- [FALSE_START] — before nuanced points
+
+Rules: Max 1-2 markers for <20 words, 2-4 for 20-50, 4-6 for >50. Casual speakers get more fillers; technical speakers get more pauses. No laugh during serious content.
+
+Return ONLY the enhanced text with markers inserted."""
+
+
+BATCH_FACT_CHECK_PROMPT = """Verify these podcast claims against the source material below.
+
+## Claims
+{claims_text}
+
+## Source Material
+{source_chunks_text}
+
+For each claim, determine:
+- "supported": source explicitly states or clearly implies the claim
+- "partially_supported": source discusses topic but lacks specifics
+- "unsupported": source doesn't mention or contradicts the claim"""
+
+
+QA_REVIEW_PROMPT = """Review this podcast chapter script from a first-time listener's perspective.
+
+## Chapter {chapter_number}: "{chapter_title}"
+Act: {act} | Energy: {energy_level} | Key Points: {key_points}
+
+## Script
+{script_text}
+
+## Evaluate
+1. Repetition: Same concept/example repeated?
+2. Engagement: Monologue traps (>3 consecutive same-speaker utterances)?
+3. Clarity: Jargon used before defined?
+4. Transition: Natural flow? Ending sets up next chapter?
+5. Energy: Matches intended {energy_level} level?
+
+Severity: critical (causes confusion/drop-off), warning (degrades quality), minor (stylistic)"""

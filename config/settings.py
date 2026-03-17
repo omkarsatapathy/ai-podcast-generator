@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     WEB_SCRAPER_MAX_WORKERS: int = 50
     WEB_SCRAPER_TIMEOUT: int = 15  # seconds per request
     LINK_FAILURE_THRESHOLD: float = 0.3  # 30% failure triggers query rewrite
-    MAX_QUERY_REWRITE_ATTEMPTS: int = 0
+    MAX_QUERY_REWRITE_ATTEMPTS: int = 1
 
     # Dedup + Relevance Scorer Settings (Phase 1)
     CHUNK_SIZE: int = 500  # words per chunk
@@ -71,6 +71,23 @@ class Settings(BaseSettings):
     # Phase 2: Character Designer Settings
     CHARACTER_DESIGNER_MODEL: str = "gpt-5.1"
     CHARACTER_DESIGNER_TEMPERATURE: float = 0.8
+
+    # Phase 3: Dialogue Generation Settings
+    DIALOGUE_ENGINE_MODEL: str = "gpt-4o"
+    DIALOGUE_ENGINE_TEMPERATURE: float = 0.8
+    EXPERT_EXPANDER_MODEL: str = "gpt-4o"
+    EXPERT_EXPANDER_TEMPERATURE: float = 0.7
+    NATURALNESS_MODEL: str = "gpt-4o"
+    NATURALNESS_TEMPERATURE: float = 0.6
+    FACT_CHECKER_MODEL: str = "gpt-4o-mini"
+    FACT_CHECKER_TEMPERATURE: float = 0.1
+    QA_REVIEWER_MODEL: str = "gpt-4o"
+    QA_REVIEWER_TEMPERATURE: float = 0.3
+    PHASE3_MAX_RETRIES: int = 2
+
+    # TTS Provider: "google" or "elevenlabs" — switch on the fly
+    TTS_PROVIDER: str = "google"
+    ELEVENLABS_API_KEY: str = ""
 
     class Config:
         env_file = ".env"

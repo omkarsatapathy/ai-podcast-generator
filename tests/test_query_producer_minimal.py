@@ -1,312 +1,390 @@
-"""Minimal test script for full Phase 1 + Phase 2 pipeline (queries → search → scrape → merge → chapter planning)."""
+"""Full pipeline test with per-phase caching and automatic resume.
+
+Runs Phase 1 → Phase 2 → Phase 3, caching state after each phase.
+On subsequent runs, automatically resumes from the latest cached phase.
+
+Cache structure:
+    data/cache/<topic_slug>_<hash>/
+        manifest.json          # Quick summary of what's cached
+        phase1_state.json      # State after Phase 1
+        phase2_state.json      # State after Phase 2
+        phase3_state.json      # State after Phase 3
+
+Usage:
+    # Run everything (caches after each phase):
+    python tests/test_query_producer_minimal.py
+
+    # Custom topic:
+    python tests/test_query_producer_minimal.py "AI regulation in Europe"
+
+    # Force re-run from scratch (ignore all cache):
+    python tests/test_query_producer_minimal.py --fresh
+
+    # Force re-run from a specific phase (e.g. re-run Phase 2 and 3):
+    python tests/test_query_producer_minimal.py --from-phase 2
+"""
+
 import os
 import sys
 import json
+import hashlib
+import time
+import argparse
 from pathlib import Path
 
-# Add project root to path
+# ---------------------------------------------------------------------------
+# Project setup
+# ---------------------------------------------------------------------------
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from dotenv import load_dotenv
+load_dotenv(project_root / ".env", override=False)
 
-# Load environment variables
-load_dotenv()
+from config.settings import settings
 
-OUTPUT_FILE = project_root / "data" / "output" / "merged_research.txt"
-PHASE2_OUTPUT_FILE = project_root / "data" / "output" / "phase2_results.json"
+CACHE_DIR = project_root / "data" / "cache"
+PHASES = [1, 2, 3]
 
 
-def check_env_vars():
-    """Check if required environment variables are set."""
-    print("🔍 Checking environment variables...\n")
+# ---------------------------------------------------------------------------
+# Cache helpers
+# ---------------------------------------------------------------------------
 
+def _cache_path_for_topic(topic: str) -> Path:
+    """Return a deterministic cache directory for *topic*."""
+    topic_norm = topic.strip().lower()
+    topic_hash = hashlib.sha256(topic_norm.encode()).hexdigest()[:16]
+    slug = topic_norm.replace(" ", "_")[:40]
+    return CACHE_DIR / f"{slug}_{topic_hash}"
+
+
+def _serialize_state(state: dict) -> dict:
+    """Make a state dict JSON-safe (handles LangChain message objects)."""
+    out = {}
+    for key, value in state.items():
+        if key == "messages" and isinstance(value, list):
+            out[key] = [
+                m if isinstance(m, dict)
+                else {"role": getattr(m, "type", "unknown"), "content": str(m.content)}
+                for m in value
+            ]
+        else:
+            out[key] = value
+    return out
+
+
+def save_phase_state(state: dict, cache_path: Path, phase: int) -> None:
+    """Persist state to ``cache_path/phaseN_state.json``."""
+    cache_path.mkdir(parents=True, exist_ok=True)
+
+    filepath = cache_path / f"phase{phase}_state.json"
+    with open(filepath, "w") as f:
+        json.dump(_serialize_state(state), f, indent=2, default=str)
+
+    # Update manifest
+    manifest_file = cache_path / "manifest.json"
+    manifest = {}
+    if manifest_file.exists():
+        with open(manifest_file) as f:
+            manifest = json.load(f)
+
+    manifest[f"phase{phase}"] = {
+        "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "state_keys": list(state.keys()),
+        "ranked_chunks": len(state.get("ranked_chunks", [])),
+        "chapters": len(state.get("chapter_outlines", [])),
+        "personas": len(state.get("character_personas", [])),
+        "dialogues": len(state.get("chapter_dialogues", [])),
+    }
+    manifest["topic"] = state.get("topic", "")
+    manifest["latest_phase"] = phase
+    with open(manifest_file, "w") as f:
+        json.dump(manifest, f, indent=2)
+
+    print(f"   >> Cache saved: {filepath.name}")
+
+
+def load_phase_state(cache_path: Path, phase: int) -> dict | None:
+    """Load cached state for *phase*. Returns ``None`` when missing/corrupt."""
+    filepath = cache_path / f"phase{phase}_state.json"
+    if not filepath.exists():
+        return None
+    try:
+        with open(filepath) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as exc:
+        print(f"   !! Cache corrupt for phase {phase}: {exc}")
+        return None
+
+
+def find_latest_cached_phase(cache_path: Path) -> int:
+    """Return the highest phase number with a valid cache, or 0 if none."""
+    for phase in reversed(PHASES):
+        if load_phase_state(cache_path, phase) is not None:
+            return phase
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Env check
+# ---------------------------------------------------------------------------
+
+def check_env_vars() -> bool:
+    """Verify required API keys are present."""
+    print("Checking environment variables...\n")
     required = {
-        "OPENAI_API_KEY": "OpenAI API key for GPT-4o-mini",
+        "OPENAI_API_KEY": "OpenAI API key",
         "GOOGLE_SEARCH_API_KEY": "Google Search API key",
-        "GOOGLE_SEARCH_ENGINE_ID": "Google Search Engine ID"
+        "GOOGLE_SEARCH_ENGINE_ID": "Google Search Engine ID",
+    }
+    ok = True
+    for key, desc in required.items():
+        val = os.getenv(key)
+        if val and val != "your-openai-api-key-here":
+            print(f"  [ok]  {key}: {val[:20]}...")
+        else:
+            print(f"  [!!]  {key}: NOT SET ({desc})")
+            ok = False
+    print()
+    return ok
+
+
+# ---------------------------------------------------------------------------
+# Phase runners
+# ---------------------------------------------------------------------------
+
+def run_phase1(topic: str) -> dict:
+    """Execute Phase 1: Research & Ingestion."""
+    from src.pipeline.phases import create_phase1_graph
+
+    print("\n" + "=" * 70)
+    print("  PHASE 1: RESEARCH & INGESTION")
+    print("=" * 70 + "\n")
+
+    graph = create_phase1_graph()
+
+    initial_state = {
+        "topic": topic,
+        "freshness": "",
+        "seed_results": [],
+        "seed_context": "",
+        "queries": [],
+        "current_date": "",
+        "messages": [],
+        "scraped_pages": [],
+        "merged_research_text": "",
+        "scrape_failure_rate": 0.0,
+        "query_rewrite_count": 0,
     }
 
-    all_set = True
-    for key, description in required.items():
-        value = os.getenv(key)
-        if value and value != "your-openai-api-key-here":
-            print(f"✅ {key}: {value[:20]}...")
-        else:
-            print(f"❌ {key}: NOT SET ({description})")
-            all_set = False
+    state = graph.invoke(initial_state)
+
+    # Print summary
+    ranked = state.get("ranked_chunks", [])
+    dedup = state.get("dedup_stats", {})
+    scraped = state.get("scraped_pages", [])
+    succeeded = sum(1 for p in scraped if p.get("success"))
+    merged_words = len(state.get("merged_research_text", "").split())
+
+    print(f"\n--- Phase 1 Summary ---")
+    print(f"  Topic:           {state['topic']}")
+    print(f"  Freshness:       {state.get('freshness', '?')}")
+    print(f"  Queries:         {len(state.get('queries', []))}")
+    print(f"  Query rewrites:  {state.get('query_rewrite_count', 0)}")
+    print(f"  Pages scraped:   {succeeded}/{len(scraped)}")
+    print(f"  Merged text:     {merged_words} words")
+    print(f"  Ranked chunks:   {len(ranked)}")
+    if dedup:
+        print(f"  Dedup stats:     total={dedup.get('total_chunks')}, "
+              f"removed={dedup.get('duplicates_removed')}, "
+              f"top_k={dedup.get('top_k_selected')}")
+    print()
+    return state
+
+
+def run_phase2(state: dict) -> dict:
+    """Execute Phase 2: Content Planning."""
+    from src.pipeline.phases import create_phase2_graph
+
+    print("\n" + "=" * 70)
+    print("  PHASE 2: CONTENT PLANNING")
+    print("=" * 70 + "\n")
+
+    state["num_speakers"] = settings.NUM_SPEAKERS
+
+    graph = create_phase2_graph()
+    state = graph.invoke(state)
+
+    # Print summary
+    outlines = state.get("chapter_outlines", [])
+    personas = state.get("character_personas", [])
+
+    print(f"\n--- Phase 2 Summary ---")
+    print(f"  Chapters:        {len(outlines)}")
+    print(f"  Duration:        {state.get('total_estimated_duration', 0):.1f} min")
+    print(f"  Personas:        {len(personas)}")
+
+    for ch in outlines:
+        print(f"    Ch {ch['chapter_number']}: {ch['title']}  "
+              f"({ch['estimated_duration_minutes']:.1f} min, {ch['energy_level']} energy)")
+
+    for p in personas:
+        print(f"    {p['role'].upper()}: {p['name']} — {p['expertise_area']}")
 
     print()
-    return all_set
+    return state
 
 
-def test_full_phase1():
-    """Test full Phase 1 pipeline: queries → search → scrape → merge."""
-    print("=" * 60)
-    print("Testing Full Phase 1 Pipeline")
-    print("=" * 60)
+def run_phase3(state: dict) -> dict:
+    """Execute Phase 3: Dialogue Generation."""
+    from src.pipeline.phases import create_phase3_graph
+
+    print("\n" + "=" * 70)
+    print("  PHASE 3: DIALOGUE GENERATION")
+    print("=" * 70 + "\n")
+
+    graph = create_phase3_graph()
+    state = graph.invoke(state)
+
+    # Print summary
+    dialogues = state.get("chapter_dialogues", [])
+    total_utts = sum(len(cd.get("utterances", [])) for cd in dialogues)
+    total_dur = sum(cd.get("estimated_chapter_duration", 0) for cd in dialogues)
+
+    print(f"\n--- Phase 3 Summary ---")
+    print(f"  Chapters:        {len(dialogues)}")
+    print(f"  Utterances:      {total_utts}")
+    print(f"  Duration:        {total_dur:.1f} min")
+
+    for cd in dialogues:
+        passed = cd.get("quality_checks_passed", False)
+        score = cd.get("qa_review", {}).get("listener_experience_score", "?")
+        issues = len(cd.get("fact_check_issues", []))
+        tag = "[PASS]" if passed else "[WARN]"
+        print(f"    {tag} Ch {cd['chapter_number']}: "
+              f"{len(cd.get('utterances', []))} utts, "
+              f"score={score}, fact_issues={issues}")
+
+    print()
+    return state
+
+
+# ---------------------------------------------------------------------------
+# Save final results
+# ---------------------------------------------------------------------------
+
+def save_results(state: dict) -> None:
+    """Write Phase 3 dialogue output for inspection."""
+    out_dir = settings.OUTPUT_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    result_file = out_dir / "phase3_results.json"
+    dialogues = state.get("chapter_dialogues", [])
+
+    with open(result_file, "w") as f:
+        json.dump(dialogues, f, indent=2, default=str)
+
+    print(f"  Results saved: {result_file}")
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+PHASE_RUNNERS = {
+    1: run_phase1,
+    2: run_phase2,
+    3: run_phase3,
+}
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Run podcast pipeline with per-phase caching.",
+    )
+    parser.add_argument("topic", nargs="*",
+                        default=["Why Gold price is falling, and the price forecast by end of year"])
+    parser.add_argument("--fresh", action="store_true",
+                        help="Ignore all cache and re-run from Phase 1")
+    parser.add_argument("--from-phase", type=int, default=None, dest="from_phase",
+                        help="Force re-run starting at this phase (1, 2, or 3)")
+    args = parser.parse_args()
+
+    topic = " ".join(args.topic)
+    cache_path = _cache_path_for_topic(topic)
+
+    print("\n" + "=" * 70)
+    print("  PODCAST PIPELINE (with per-phase caching)")
+    print("=" * 70)
+    print(f"  Topic:       {topic}")
+    print(f"  Cache dir:   {cache_path}")
+    print(f"  TTS:         {settings.TTS_PROVIDER}")
+    print(f"  Fresh:       {args.fresh}")
+    print(f"  From-phase:  {args.from_phase or 'auto'}")
     print()
 
-    # Check environment
     if not check_env_vars():
-        print("⚠️  Please set missing API keys in .env file")
+        print("Please set missing API keys in .env")
         return
 
-    try:
-        print("📦 Importing Phase 1 graph...")
-        from src.pipeline.phases.phase1_graph import create_phase1_graph
-        print("✅ Import successful\n")
+    # Determine where to resume from
+    if args.fresh:
+        resume_after = 0
+    elif args.from_phase:
+        resume_after = args.from_phase - 1
+    else:
+        resume_after = find_latest_cached_phase(cache_path)
 
-        graph = create_phase1_graph()
-
-
-        test_topic = "why Gold price is falling, and the priec forecast by end of year"
-
-
-        print(f"🔬 Testing with topic: '{test_topic}'")
-        print("⏳ Running full Phase 1 (queries → search → scrape → merge)...\n")
-
-        initial_state = {
-            "topic": test_topic,
-            "freshness": "",
-            "seed_results": [],
-            "seed_context": "",
-            "queries": [],
-            "current_date": "",
-            "messages": [],
-            "scraped_pages": [],
-            "merged_research_text": "",
-            "scrape_failure_rate": 0.0,
-            "query_rewrite_count": 0,
-        }
-
-        final_state = graph.invoke(initial_state)
-
-        # Display summary
-        print("=" * 60)
-        print("✅ RESULTS")
-        print("=" * 60)
-
-        print(f"\n📌 Topic: {final_state['topic']}")
-        print(f"🏷️  Freshness: {final_state['freshness']}")
-        print(f"🔍 Queries generated: {len(final_state['queries'])}")
-        print(f"🔄 Query rewrites: {final_state['query_rewrite_count']}")
-        print(f"📉 Scrape failure rate: {final_state['scrape_failure_rate']:.0%}")
-
-        # Scrape stats
-        scraped = final_state["scraped_pages"]
-        succeeded = sum(1 for p in scraped if p["success"])
-        print(f"🌐 Pages scraped: {succeeded}/{len(scraped)}")
-
-        # Merged text stats
-        merged = final_state["merged_research_text"]
-        word_count = len(merged.split()) if merged else 0
-        print(f"\n📝 Merged research text: {len(merged)} chars, {word_count} words")
-
-        # Save to file
-        OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-        OUTPUT_FILE.write_text(merged, encoding="utf-8")
-        print(f"💾 Saved to: {OUTPUT_FILE}")
-
-        # Verify dedup_and_rank node was executed (FINAL NODE)
-        ranked_chunks = final_state.get("ranked_chunks", [])
-        dedup_stats = final_state.get("dedup_stats", {})
-
-        print(f"\n🔬 DEDUP & RELEVANCE SCORING (Final Node):")
-        if ranked_chunks and dedup_stats:
-            print(f"   ✅ Ranked chunks produced: {len(ranked_chunks)}")
-            print(f"   ✅ Dedup stats available:")
-            print(f"      - Total chunks: {dedup_stats.get('total_chunks', 'N/A')}")
-            print(f"      - Duplicates removed: {dedup_stats.get('duplicates_removed', 'N/A')}")
-            print(f"      - Top-K selected: {dedup_stats.get('top_k_selected', 'N/A')}")
+    # Load cached state (if resuming)
+    if resume_after > 0:
+        state = load_phase_state(cache_path, resume_after)
+        if state is None:
+            print(f"  !! Could not load phase {resume_after} cache, starting from scratch")
+            resume_after = 0
+            state = None
         else:
-            print(f"   ⚠️  Dedup & rank node NOT executed!")
-            print(f"      - Ranked chunks: {len(ranked_chunks)}")
-            print(f"      - Dedup stats: {bool(dedup_stats)}")
-
-        # Verify chapter titles were generated
-        chapter_titles = final_state.get("chapter_titles", [])
-        print(f"\n📚 Chapter titles generated: {len(chapter_titles)}/10")
-
-        print(f"\n📊 WORD COUNT: {word_count}")
-        print("=" * 60)
-        print("✅ PHASE 1 TEST PASSED! (Reached final node: dedup_and_rank → END)")
-        print("=" * 60)
-
-        return final_state
-
-    except Exception as e:
-        print("\n" + "=" * 60)
-        print("❌ PHASE 1 TEST FAILED!")
-        print("=" * 60)
-        print(f"\nError: {e}\n")
-
-        import traceback
-        traceback.print_exc()
-        return None
-
-
-def test_phase2(phase1_final_state):
-    """Test Phase 2: Chapter Planner + Character Designer using Phase 1 output."""
-    print("\n" + "=" * 60)
-    print("Testing Phase 2 Pipeline (Chapter Planner + Character Designer)")
-    print("=" * 60)
-    print()
-
-    try:
-        print("📦 Importing Phase 2 graph...")
-        from src.pipeline.phases.phase2_graph import create_phase2_graph
-        print("✅ Import successful\n")
-
-        graph = create_phase2_graph()
-
-        # Prepare Phase 2 initial state from Phase 1 output
-        ranked_chunks = phase1_final_state.get("ranked_chunks", [])
-        topic = phase1_final_state.get("topic", "")
-
-        if not ranked_chunks:
-            print("❌ No ranked chunks from Phase 1! Cannot run Phase 2.")
-            return None
-
-        print(f"📥 Phase 2 Input:")
-        print(f"   Topic: '{topic}'")
-        print(f"   Ranked chunks: {len(ranked_chunks)}")
+            print(f"  >> Resuming after phase {resume_after} (cached)")
+            print(f"     Phases 1..{resume_after} skipped — $0 API cost")
+            print()
+    else:
+        state = None
+        print("  >> Starting from Phase 1 (no usable cache)")
         print()
 
-        from config.settings import settings
-        num_speakers = settings.NUM_SPEAKERS
+    # Run remaining phases
+    for phase in PHASES:
+        if phase <= resume_after:
+            continue
 
-        initial_state = {
-            "topic": topic,
-            "ranked_chunks": ranked_chunks,
-            "num_speakers": num_speakers,
-            "chapter_outlines": [],
-            "analyzed_chunks": [],
-            "total_estimated_duration": 0.0,
-            "character_personas": [],
-        }
+        t0 = time.time()
+        try:
+            if phase == 1:
+                state = PHASE_RUNNERS[phase](topic)
+            else:
+                state = PHASE_RUNNERS[phase](state)
+        except Exception as exc:
+            print(f"\n{'=' * 70}")
+            print(f"  !! PHASE {phase} FAILED")
+            print(f"{'=' * 70}")
+            print(f"  Error: {exc}\n")
+            import traceback
+            traceback.print_exc()
+            return
 
-        print(f"⏳ Running Phase 2 (Chapter Planner + Character Designer, {num_speakers} speakers)...\n")
-        final_state = graph.invoke(initial_state)
+        elapsed = time.time() - t0
+        print(f"  Phase {phase} completed in {elapsed:.1f}s")
 
-        # Display Phase 2 Results
-        print("=" * 60)
-        print("✅ PHASE 2 RESULTS")
-        print("=" * 60)
+        # Cache immediately after each phase
+        save_phase_state(state, cache_path, phase)
 
-        chapter_outlines = final_state.get("chapter_outlines", [])
-        analyzed_chunks = final_state.get("analyzed_chunks", [])
-        total_duration = final_state.get("total_estimated_duration", 0.0)
+    # Save final results
+    save_results(state)
 
-        print(f"\n📚 Chapters Created: {len(chapter_outlines)}")
-        print(f"⏱️  Total Estimated Duration: {total_duration:.1f} minutes")
-        print(f"📊 Analyzed Chunks: {len(analyzed_chunks)}")
-
-        # Display chapter outlines
-        print(f"\n{'=' * 60}")
-        print("📖 CHAPTER OUTLINES")
-        print('=' * 60)
-
-        for i, chapter in enumerate(chapter_outlines, 1):
-            print(f"\n📌 Chapter {chapter['chapter_number']}: {chapter['title']}")
-            print(f"   Act: {chapter['act']} | Energy: {chapter['energy_level']} | Duration: {chapter['estimated_duration_minutes']:.1f} min")
-            print(f"   Key Points ({len(chapter['key_points'])}):")
-            for j, point in enumerate(chapter['key_points'], 1):
-                print(f"      {j}. {point}")
-            print(f"   Transition Hook: \"{chapter['transition_hook']}\"")
-            print(f"   Source Chunks: {len(chapter['source_chunk_ids'])} chunks")
-
-        # Display chunk schema (show first 2 analyzed chunks as examples)
-        print(f"\n{'=' * 60}")
-        print("🔬 CHUNK SCHEMA (Sample)")
-        print('=' * 60)
-        print("\nShowing structure of analyzed chunks (first 2 examples):\n")
-
-        for i, chunk in enumerate(analyzed_chunks[:2], 1):
-            print(f"--- Chunk {i} ({chunk.get('chunk_id', 'N/A')}) ---")
-            print(f"  Original Fields:")
-            print(f"    - chunk_id: {chunk.get('chunk_id', 'N/A')}")
-            print(f"    - source_url: {chunk.get('source_url', 'N/A')[:60]}...")
-            print(f"    - word_count: {chunk.get('word_count', 'N/A')}")
-            print(f"    - relevance_score: {chunk.get('relevance_score', 'N/A'):.4f}")
-            print(f"    - text (preview): {chunk.get('text', '')[:100]}...")
-            print(f"\n  Phase 2 Analysis Fields (Added):")
-            print(f"    - analysis_topic: \"{chunk.get('analysis_topic', 'N/A')}\"")
-            print(f"    - analysis_subtopics: {chunk.get('analysis_subtopics', [])}")
-            print(f"    - analysis_summary: \"{chunk.get('analysis_summary', 'N/A')}\"")
-            print(f"    - analysis_tone: \"{chunk.get('analysis_tone', 'N/A')}\"")
-            print()
-
-        # Display character personas
-        character_personas = final_state.get("character_personas", [])
-        if character_personas:
-            print(f"\n{'=' * 60}")
-            print("🎭 CHARACTER PERSONAS")
-            print('=' * 60)
-            for p in character_personas:
-                print(f"\n  {p['role'].upper()}: {p['name']}")
-                print(f"    Voice: {p['tts_voice_id']} ({p['gender']})")
-                print(f"    Expertise: {p['expertise_area']}")
-                print(f"    Style: {p['speaking_style']}")
-                print(f"    Vocabulary: {p['vocabulary_level']}")
-                print(f"    Fillers: {p['filler_patterns']}")
-                print(f"    Reactions: {p['reaction_patterns']}")
-                print(f"    Catchphrases: {p['catchphrases']}")
-
-        # Save Phase 2 results to JSON
-        phase2_results = {
-            "topic": topic,
-            "total_chapters": len(chapter_outlines),
-            "total_duration_minutes": total_duration,
-            "chapter_outlines": chapter_outlines,
-            "character_personas": character_personas,
-            "analyzed_chunks_count": len(analyzed_chunks),
-            "sample_chunks": analyzed_chunks[:3],  # Save first 3 for inspection
-        }
-
-        PHASE2_OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-        PHASE2_OUTPUT_FILE.write_text(
-            json.dumps(phase2_results, indent=2, ensure_ascii=False),
-            encoding="utf-8"
-        )
-        print(f"💾 Phase 2 results saved to: {PHASE2_OUTPUT_FILE}")
-
-        print(f"\n{'=' * 60}")
-        print("✅ PHASE 2 TEST PASSED!")
-        print('=' * 60)
-
-        return final_state
-
-    except Exception as e:
-        print("\n" + "=" * 60)
-        print("❌ PHASE 2 TEST FAILED!")
-        print("=" * 60)
-        print(f"\nError: {e}\n")
-
-        import traceback
-        traceback.print_exc()
-        return None
-
-
-def test_full_pipeline():
-    """Test full pipeline: Phase 1 → Phase 2."""
-    print("🚀 Starting Full Pipeline Test (Phase 1 + Phase 2)")
-    print("=" * 60)
-    print()
-
-    # Run Phase 1
-    phase1_state = test_full_phase1()
-
-    # Run Phase 2 if Phase 1 succeeded
-    if phase1_state and phase1_state.get("ranked_chunks"):
-        test_phase2(phase1_state)
-    else:
-        print("\n⚠️  Skipping Phase 2 due to Phase 1 failure or missing ranked_chunks")
-
-    print("\n" + "=" * 60)
-    print("🏁 FULL PIPELINE TEST COMPLETE")
-    print("=" * 60)
+    print("\n" + "=" * 70)
+    print("  PIPELINE COMPLETE")
+    print("=" * 70 + "\n")
 
 
 if __name__ == "__main__":
-    test_full_pipeline()
+    main()

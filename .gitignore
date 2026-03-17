@@ -76,6 +76,7 @@ outputs/
 *.tmp
 *.temp
 .cache/
+data/
 
 # Claude settings (keep example, ignore local)
 .claude/settings.local.json
