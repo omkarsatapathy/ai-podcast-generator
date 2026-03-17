@@ -1,4 +1,4 @@
-"""Audio helpers for Phase 4 synthesis and QC."""
+"""Audio helpers for Phase 4 synthesis and Phase 5 post-processing."""
 
 from __future__ import annotations
 
@@ -8,6 +8,8 @@ import wave
 from array import array
 from pathlib import Path
 from typing import Any, Dict
+
+from pydub import AudioSegment
 
 
 def _write_bytes_atomic(path: Path, data: bytes) -> None:
@@ -144,3 +146,56 @@ def validate_wav_file(
         report["reasons"].append("clipping_detected")
 
     return report
+
+
+# ==================== Phase 5 Helpers ====================
+
+
+def convert_to_pipeline_format(
+    segment: AudioSegment,
+    target_rate: int = 44100,
+    target_channels: int = 2,
+    target_sample_width: int = 2,
+) -> AudioSegment:
+    """Normalize an AudioSegment to Phase 5 pipeline standard format."""
+
+    if segment.frame_rate != target_rate:
+        segment = segment.set_frame_rate(target_rate)
+    if segment.channels != target_channels:
+        segment = segment.set_channels(target_channels)
+    if segment.sample_width != target_sample_width:
+        segment = segment.set_sample_width(target_sample_width)
+    return segment
+
+
+def apply_crossfade(
+    seg_a: AudioSegment, seg_b: AudioSegment, fade_ms: int = 75
+) -> AudioSegment:
+    """Join two segments with a crossfade at the boundary."""
+
+    fade_ms = min(fade_ms, len(seg_a), len(seg_b))
+    if fade_ms <= 0:
+        return seg_a + seg_b
+    return seg_a.append(seg_b, crossfade=fade_ms)
+
+
+def get_file_duration_ms(path: str | Path) -> int:
+    """Return WAV file duration in milliseconds."""
+
+    info = inspect_wav_file(path)
+    return int(info["duration_seconds"] * 1000)
+
+
+def export_wav_atomic(segment: AudioSegment, path: str | Path) -> None:
+    """Export an AudioSegment to WAV using atomic write pattern."""
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        os.close(fd)
+        segment.export(temp_path, format="wav")
+        os.replace(temp_path, str(path))
+    finally:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)

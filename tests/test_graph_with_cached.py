@@ -1,11 +1,16 @@
 """Full pipeline test with per-phase caching and automatic resume.
 
-Runs Phase 1 → Phase 2 → Phase 3 → Phase 4, caching state after each phase.
-On subsequent runs, automatically resumes from the latest cached phase.
+Runs Phase 1 → Phase 2 → Phase 3 → Phase 4 → Phase 5, caching state
+after each phase. On subsequent runs, automatically resumes from the
+latest cached phase.
 
 Phase 4 note: when resuming from a Phase 3 cache, only the FIRST
 --minutes of content (default 15) are synthesised to cap TTS cost.
 The trimmed Phase 4 output is cached as phase4_state.json for Phase 5.
+
+Phase 5 note: runs the full audio post-processing pipeline (overlap
+engine, mastering, cold open, stitching) on the Phase 4 output and
+produces the final podcast MP3 at data/audio/phase5/<episode_id>/final/.
 
 Cache structure:
     data/cache/<topic_slug>_<hash>/
@@ -14,9 +19,10 @@ Cache structure:
         phase2_state.json      # State after Phase 2
         phase3_state.json      # State after Phase 3
         phase4_state.json      # State after Phase 4 (trimmed to --minutes)
+        phase5_state.json      # State after Phase 5 (final MP3 produced)
 
 Usage:
-    # Run Phases 1-3 then Phase 4 on first 15 min:
+    # Run full pipeline (Phases 1-5):
     python tests/test_graph_with_cached.py
 
     # Custom topic:
@@ -26,7 +32,7 @@ Usage:
     python tests/test_graph_with_cached.py --fresh
 
     # Force re-run starting at a specific phase:
-    python tests/test_graph_with_cached.py --from-phase 4
+    python tests/test_graph_with_cached.py --from-phase 5
 
     # Change the Phase 4 content slice (e.g. 20 minutes):
     python tests/test_graph_with_cached.py --minutes 20
@@ -52,7 +58,7 @@ load_dotenv(project_root / ".env", override=False)
 from config.settings import settings
 
 CACHE_DIR = project_root / "data" / "cache"
-PHASES = [1, 2, 3, 4]
+PHASES = [1, 2, 3, 4, 5]
 PHASE4_DEFAULT_MINUTES = 15.0
 
 
@@ -112,6 +118,14 @@ def save_phase_state(state: dict, cache_path: Path, phase: int) -> None:
         entry["chapter_manifests"] = len(p4.get("chapter_manifests", []))
         entry["ready_for_phase5"] = p4.get("ready_for_phase5", False)
         entry["failed_jobs"] = len(p4.get("failed_jobs", []))
+    elif phase == 5:
+        p5 = state.get("phase5_output") or {}
+        entry["final_podcast_path"] = p5.get("final_podcast_path", "")
+        entry["total_duration_seconds"] = p5.get("total_duration_seconds", 0.0)
+        entry["file_size_bytes"] = p5.get("file_size_bytes", 0)
+        entry["chapter_count"] = p5.get("chapter_count", 0)
+        entry["cold_open_included"] = p5.get("cold_open_included", False)
+        entry["ready"] = p5.get("ready", False)
 
     manifest[f"phase{phase}"] = entry
     manifest["topic"] = state.get("topic", "")
@@ -382,12 +396,64 @@ def run_phase4(state: dict, target_minutes: float) -> dict:
     return merged
 
 
+def run_phase5(state: dict) -> dict:
+    """Execute Phase 5: Audio Post-Processing."""
+    from src.pipeline.phases import create_phase5_graph
+
+    print("\n" + "=" * 70)
+    print("  PHASE 5: AUDIO POST-PROCESSING")
+    print("=" * 70 + "\n")
+
+    # Build Phase 5 input from accumulated state
+    p4_output = state.get("phase4_output") or {}
+    phase5_input = {
+        "topic": state.get("topic", ""),
+        "episode_id": state.get("episode_id") or p4_output.get("episode_id", ""),
+        "character_personas": state.get("character_personas", []),
+        "chapter_dialogues": state.get("chapter_dialogues", []),
+        "chapter_audio_manifests": state.get("chapter_audio_manifests")
+            or p4_output.get("chapter_manifests", []),
+        "timing_metadata": state.get("timing_metadata")
+            or p4_output.get("timing_metadata", {}),
+        "audio_files": state.get("audio_files")
+            or p4_output.get("audio_files", []),
+        "voice_metadata": state.get("voice_metadata")
+            or p4_output.get("voice_metadata", {}),
+        "ready_for_phase5": state.get("ready_for_phase5")
+            or p4_output.get("ready_for_phase5", False),
+        "phase4_output": p4_output,
+    }
+
+    graph = create_phase5_graph()
+    result = graph.invoke(phase5_input)
+
+    p5_output = result.get("phase5_output") or {}
+    duration = p5_output.get("total_duration_seconds", 0.0)
+    size_bytes = p5_output.get("file_size_bytes", 0)
+    size_mb = size_bytes / (1024 * 1024) if size_bytes else 0
+
+    print(f"\n--- Phase 5 Summary ---")
+    print(f"  Final MP3        : {p5_output.get('final_podcast_path', 'N/A')}")
+    print(f"  Duration         : {int(duration // 60)}:{int(duration % 60):02d}")
+    print(f"  File size        : {size_mb:.1f} MB")
+    print(f"  Chapters         : {p5_output.get('chapter_count', 0)}")
+    print(f"  Degraded         : {len(p5_output.get('degraded_chapters', []))}")
+    print(f"  Cold open        : {'Yes' if p5_output.get('cold_open_included') else 'No'}")
+    print(f"  Ready            : {p5_output.get('ready', False)}")
+    print()
+
+    # Merge back onto full state
+    merged = dict(state)
+    merged.update(result)
+    return merged
+
+
 # ---------------------------------------------------------------------------
 # Save final results
 # ---------------------------------------------------------------------------
 
 def save_results(state: dict) -> None:
-    """Write Phase 3 and Phase 4 outputs for inspection."""
+    """Write Phase 3, 4, and 5 outputs for inspection."""
     out_dir = settings.OUTPUT_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -404,6 +470,16 @@ def save_results(state: dict) -> None:
             json.dump(p4_output, f, indent=2, default=str)
         print(f"  Phase 4 results  : {p4_file}")
 
+    p5_output = state.get("phase5_output")
+    if p5_output:
+        p5_file = out_dir / "phase5_results.json"
+        with open(p5_file, "w") as f:
+            json.dump(p5_output, f, indent=2, default=str)
+        print(f"  Phase 5 results  : {p5_file}")
+        mp3_path = p5_output.get("final_podcast_path", "")
+        if mp3_path:
+            print(f"  Final podcast    : {mp3_path}")
+
 
 # ---------------------------------------------------------------------------
 # Main
@@ -413,19 +489,20 @@ PHASE_RUNNERS = {
     1: run_phase1,
     2: run_phase2,
     3: run_phase3,
+    5: run_phase5,
 }
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run podcast pipeline (Phases 1-4) with per-phase caching.",
+        description="Run podcast pipeline (Phases 1-5) with per-phase caching.",
     )
     parser.add_argument("topic", nargs="*",
                         default=["Why Gold price is falling, and the price forecast by end of year"])
     parser.add_argument("--fresh", action="store_true",
                         help="Ignore all cache and re-run from Phase 1")
     parser.add_argument("--from-phase", type=int, default=None, dest="from_phase",
-                        help="Force re-run starting at this phase (1–4)")
+                        help="Force re-run starting at this phase (1–5)")
     parser.add_argument("--minutes", type=float, default=PHASE4_DEFAULT_MINUTES,
                         dest="minutes",
                         help=f"Minutes of Phase 3 content to synthesise in Phase 4 "

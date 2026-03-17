@@ -126,6 +126,54 @@ class Settings(BaseSettings):
     ELEVENLABS_EXPERT_VOICE_ID: str = ""
     ELEVENLABS_SKEPTIC_VOICE_ID: str = ""
 
+    # Phase 5: Audio Post-Processing
+    PHASE5_TARGET_SAMPLE_RATE: int = 44100
+    PHASE5_TARGET_CHANNELS: int = 2
+    PHASE5_TARGET_SAMPLE_WIDTH: int = 2
+
+    # Overlap Engine
+    PHASE5_TURN_GAP_MS: int = 300
+    PHASE5_CROSSFADE_MS: int = 75
+    PHASE5_INTERRUPT_VOLUME_REDUCTION_DB: int = -3
+    PHASE5_BACKCHANNEL_VOLUME_DB: int = -8
+    PHASE5_LAUGH_VOLUME_DB: int = -4
+
+    # Post-Processor (EQ)
+    PHASE5_EQ_PRESENCE_FREQ: int = 3000
+    PHASE5_EQ_PRESENCE_GAIN: int = 2
+    PHASE5_EQ_RUMBLE_FREQ: int = 80
+    PHASE5_EQ_RUMBLE_GAIN: int = -6
+
+    # Post-Processor (Compression)
+    PHASE5_COMP_THRESHOLD_DB: int = -20
+    PHASE5_COMP_RATIO: int = 2
+    PHASE5_COMP_ATTACK_MS: int = 5
+    PHASE5_COMP_RELEASE_MS: int = 50
+    PHASE5_COMP_MAKEUP_GAIN_DB: int = 2
+
+    # Post-Processor (Loudness)
+    PHASE5_LOUDNESS_TARGET_LUFS: float = -16.0
+    PHASE5_LOUDNESS_TRUE_PEAK_DB: float = -1.5
+    PHASE5_NOISE_GATE_THRESHOLD_DB: int = -40
+    PHASE5_NOISE_GATE_SILENCE_DURATION: float = 0.1
+
+    # Post-Processor (Room Tone)
+    PHASE5_ENABLE_ROOM_TONE: bool = False
+    PHASE5_ROOM_TONE_LEVEL_DB: int = -32
+
+    # Cold Open
+    PHASE5_COLD_OPEN_MIN_MS: int = 12000
+    PHASE5_COLD_OPEN_MAX_MS: int = 25000
+    PHASE5_COLD_OPEN_LLM_MODEL: str = "claude-haiku-4-5-20251001"
+
+    # Chapter Stitcher
+    PHASE5_INTRO_MUSIC_DURATION_MS: int = 8000
+    PHASE5_COLD_OPEN_INTRO_CROSSFADE_MS: int = 3000
+    PHASE5_MP3_BITRATE_KBPS: int = 128
+
+    # Output
+    PHASE5_OUTPUT_BASE_DIR: str = "data/audio/phase5"
+
     class Config:
         env_file = ".env"
         case_sensitive = True
