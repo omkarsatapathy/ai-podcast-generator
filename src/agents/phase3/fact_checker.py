@@ -11,6 +11,7 @@ from langchain_openai import ChatOpenAI
 from config.settings import settings
 from src.llm.prompts import BATCH_FACT_CHECK_PROMPT
 from src.models.dialogue import BatchFactCheckResult
+from src.utils.cost_tracker import cost_tracker
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -60,6 +61,7 @@ def check_facts(
     llm = ChatOpenAI(
         model=settings.FACT_CHECKER_MODEL,
         temperature=settings.FACT_CHECKER_TEMPERATURE,
+        callbacks=[cost_tracker],
     ).with_structured_output(BatchFactCheckResult, method="json_schema")
 
     issues = []

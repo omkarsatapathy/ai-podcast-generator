@@ -10,6 +10,23 @@ MODEL_TIER_LOW: str = "gpt-5.4-nano"
 MODEL_TIER_MEDIUM: str = "gpt-4.1-mini"
 MODEL_TIER_HIGH: str = "gpt-5.4-mini"
 
+# Per-model pricing (USD per million tokens) — update when OpenAI / Google changes rates
+MODEL_PRICING: dict[str, dict[str, float]] = {
+    # OpenAI LLM models
+    "gpt-5.4-nano": {"input_per_million": 0.02, "output_per_million": 1.25},
+    "gpt-4.1-mini":  {"input_per_million": 0.40, "output_per_million": 1.60},
+    "gpt-5.4-mini":  {"input_per_million": 0.75, "output_per_million": 4.50},
+    "gpt-4o-mini":   {"input_per_million": 0.15, "output_per_million": 0.60},
+    # Vertex AI Gemini TTS models — billed on input tokens only (audio is the output)
+    # Pricing source: https://cloud.google.com/vertex-ai/generative-ai/pricing (verify periodically)
+    "gemini-2.5-pro-preview-tts": {"input_per_million": 7.50, "output_per_million": 0.0},
+    "gemini-2.5-pro-tts":         {"input_per_million": 3.50, "output_per_million": 0.0},
+    "gemini-2.5-flash-tts":       {"input_per_million": 0.10, "output_per_million": 0.0},
+}
+
+# Currency conversion
+USD_TO_INR: float = 95.0
+
 
 class Settings(BaseSettings):
     """Application settings."""

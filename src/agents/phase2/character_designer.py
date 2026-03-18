@@ -11,6 +11,7 @@ from langchain_openai import ChatOpenAI
 from config.settings import settings
 from src.llm.prompts import CHARACTER_DESIGNER_PROMPT
 from src.models.character import CharacterRoster, CharacterPersona
+from src.utils.cost_tracker import cost_tracker
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -86,6 +87,7 @@ def _get_llm() -> ChatOpenAI:
     return ChatOpenAI(
         model=settings.CHARACTER_DESIGNER_MODEL,
         temperature=settings.CHARACTER_DESIGNER_TEMPERATURE,
+        callbacks=[cost_tracker],
     )
 
 

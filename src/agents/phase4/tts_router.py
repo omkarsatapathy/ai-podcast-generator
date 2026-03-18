@@ -469,6 +469,11 @@ def synthesize_routed_job(job: Dict[str, Any]) -> Dict[str, Any]:
             project_id=settings.GCP_PROJECT_ID,
             location=settings.GCP_LOCATION,
         )
+        from src.utils.cost_tracker import cost_tracker
+        cost_tracker.track_tts(
+            model=payload["model"],
+            input_tokens=result.get("input_tokens", 0),
+        )
     elif validated_job.provider == "elevenlabs":
         result = synthesize_elevenlabs_speech(
             text=payload["text"],

@@ -10,6 +10,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 
 from src.tools.web_tools import GoogleSearchTool, WebFetchTool, get_current_date
+from src.utils.cost_tracker import cost_tracker
 from src.models.query_models import QueryProducerOutput, SearchQuery
 from src.pipeline.phases.phase1_graph import create_phase1_graph
 
@@ -100,7 +101,7 @@ def classify_freshness(topic: str) -> str:
     has_recent_keywords = any(kw in topic_lower for kw in recent_keywords)
 
     # Use LLM for final decision
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, callbacks=[cost_tracker])
 
     prompt = f"""Classify this topic as either 'recent' (time-sensitive news/events) or 'evergreen' (timeless topic).
 

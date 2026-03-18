@@ -65,6 +65,7 @@ from dotenv import load_dotenv
 load_dotenv(project_root / ".env", override=False)
 
 from config.settings import settings
+from src.utils.cost_tracker import cost_tracker
 
 CACHE_DIR = project_root / "data" / "cache"
 PHASES = [1, 2, 3, 4, 5]
@@ -607,6 +608,7 @@ def main():
 
         elapsed = time.time() - t0
         print(f"  Phase {phase} completed in {elapsed:.1f}s")
+        cost_tracker.print_summary()
 
         # Cache immediately after each phase
         save_phase_state(state, cache_path, phase)

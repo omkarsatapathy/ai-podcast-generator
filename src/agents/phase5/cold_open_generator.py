@@ -60,11 +60,13 @@ def _scan_script_for_candidates(
 
     try:
         from langchain_openai import ChatOpenAI
+        from src.utils.cost_tracker import cost_tracker
 
         llm = ChatOpenAI(
             model=settings.PHASE5_COLD_OPEN_LLM_MODEL,
             temperature=0.3,
             request_timeout=30,
+            callbacks=[cost_tracker],
         )
         prompt = COLD_OPEN_USER_PROMPT.format(script_text=script_text)
         response = llm.invoke(

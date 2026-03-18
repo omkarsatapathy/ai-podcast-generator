@@ -10,6 +10,7 @@ from langchain_openai import ChatOpenAI
 from config.settings import settings
 from src.llm.prompts import QA_REVIEW_PROMPT
 from src.models.dialogue import QAReviewResult
+from src.utils.cost_tracker import cost_tracker
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -35,6 +36,7 @@ def review_chapter(
     llm = ChatOpenAI(
         model=settings.QA_REVIEWER_MODEL,
         temperature=settings.QA_REVIEWER_TEMPERATURE,
+        callbacks=[cost_tracker],
     ).with_structured_output(QAReviewResult, method="json_schema")
 
     prompt = QA_REVIEW_PROMPT.format(

@@ -14,6 +14,7 @@ from src.llm.prompts import (
     EXPERT_EXPAND_WITH_NATURALNESS_PROMPT, BEAT_OBJECTIVES,
 )
 from src.models.dialogue import BeatDialogue
+from src.utils.cost_tracker import cost_tracker
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -33,6 +34,7 @@ def _get_llm(model: str = None, temperature: float = None) -> ChatOpenAI:
     return ChatOpenAI(
         model=model or settings.DIALOGUE_ENGINE_MODEL,
         temperature=temperature if temperature is not None else settings.DIALOGUE_ENGINE_TEMPERATURE,
+        callbacks=[cost_tracker],
     )
 
 

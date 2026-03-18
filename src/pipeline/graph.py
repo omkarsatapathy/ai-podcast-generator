@@ -31,6 +31,7 @@ from src.pipeline.phases import (
     create_phase4_graph,
     create_phase5_graph,
 )
+from src.utils.cost_tracker import cost_tracker
 
 
 # ==================== GLOBAL STATE ====================
@@ -51,7 +52,9 @@ def phase1_wrapper(state: Any) -> Any:
     print("📊 PHASE 1: RESEARCH & INGESTION")
     print("="*80)
     graph = create_phase1_graph()
-    return graph.invoke(state)
+    result = graph.invoke(state)
+    cost_tracker.print_summary()
+    return result
 
 
 def phase2_wrapper(state: Any) -> Any:
@@ -60,7 +63,9 @@ def phase2_wrapper(state: Any) -> Any:
     print("📋 PHASE 2: CONTENT PLANNING")
     print("="*80)
     graph = create_phase2_graph()
-    return graph.invoke(state)
+    result = graph.invoke(state)
+    cost_tracker.print_summary()
+    return result
 
 
 def phase3_wrapper(state: Any) -> Any:
@@ -69,7 +74,9 @@ def phase3_wrapper(state: Any) -> Any:
     print("💬 PHASE 3: DIALOGUE GENERATION")
     print("="*80)
     graph = create_phase3_graph()
-    return graph.invoke(state)
+    result = graph.invoke(state)
+    cost_tracker.print_summary()
+    return result
 
 
 def phase4_wrapper(state: Any) -> Any:
@@ -78,7 +85,9 @@ def phase4_wrapper(state: Any) -> Any:
     print("🎤 PHASE 4: VOICE SYNTHESIS")
     print("="*80)
     graph = create_phase4_graph()
-    return graph.invoke(state)
+    result = graph.invoke(state)
+    cost_tracker.print_summary()
+    return result
 
 
 def phase5_wrapper(state: Any) -> Any:
@@ -87,7 +96,12 @@ def phase5_wrapper(state: Any) -> Any:
     print("🎵 PHASE 5: AUDIO POST-PROCESSING")
     print("="*80)
     graph = create_phase5_graph()
-    return graph.invoke(state)
+    result = graph.invoke(state)
+
+    # Final cumulative summary + inject into state
+    cost_tracker.print_summary()
+    result["cost_summary"] = cost_tracker.get_summary()
+    return result
 
 
 # ==================== GRAPH CONSTRUCTION ====================

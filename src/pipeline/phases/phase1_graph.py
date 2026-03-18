@@ -20,6 +20,7 @@ from langgraph.graph import StateGraph, END
 
 from config.settings import settings
 from src.tools.web_tools import get_current_date
+from src.utils.cost_tracker import cost_tracker
 
 
 # ==================== STATE ====================
@@ -165,7 +166,7 @@ def generate_queries_node(state: Phase1State) -> Phase1State:
         state["query_rewrite_count"] += 1
         print(f"🔄 QUERY REWRITE #{state['query_rewrite_count']}/{settings.MAX_QUERY_REWRITE_ATTEMPTS}")
 
-    llm = ChatOpenAI(model=settings.QUERY_PRODUCER_MODEL, temperature=settings.QUERY_PRODUCER_TEMPERATURE)
+    llm = ChatOpenAI(model=settings.QUERY_PRODUCER_MODEL, temperature=settings.QUERY_PRODUCER_TEMPERATURE, callbacks=[cost_tracker])
 
     topic = state["topic"]
     freshness = state["freshness"]

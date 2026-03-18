@@ -48,7 +48,11 @@ def synthesize_gemini_speech(
         raise ValueError("Google TTS response did not include audio data")
 
     audio_part = response.candidates[0].content.parts[0]
-    
+
+    # Extract token usage for cost tracking
+    usage = response.usage_metadata
+    input_tokens = getattr(usage, "prompt_token_count", 0) if usage else 0
+
     # The SDK returns bytes directly if available in inline_data
     if audio_part.inline_data:
         return {
@@ -56,6 +60,7 @@ def synthesize_gemini_speech(
             "sample_rate": 24000,
             "channels": 1,
             "sample_width": 2,
+            "input_tokens": input_tokens,
         }
 
     raise ValueError("Audio data was not found in the response parts")

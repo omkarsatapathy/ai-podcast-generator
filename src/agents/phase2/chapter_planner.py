@@ -24,6 +24,7 @@ from src.models.chapter import (
     BatchChapterOutlines,
     ChapterOutline,
 )
+from src.utils.cost_tracker import cost_tracker
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -34,6 +35,7 @@ def _get_llm() -> ChatOpenAI:
     return ChatOpenAI(
         model=settings.CHAPTER_PLANNER_MODEL,
         temperature=settings.CHAPTER_PLANNER_TEMPERATURE,
+        callbacks=[cost_tracker],
     )
 
 

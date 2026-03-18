@@ -12,6 +12,7 @@ from langchain_openai import ChatOpenAI
 
 from config.settings import settings
 from src.llm.prompts import NATURALNESS_INJECTION_PROMPT
+from src.utils.cost_tracker import cost_tracker
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -60,6 +61,7 @@ def inject_naturalness(
     llm = ChatOpenAI(
         model=settings.NATURALNESS_MODEL,
         temperature=settings.NATURALNESS_TEMPERATURE,
+        callbacks=[cost_tracker],
     )
 
     skipped = 0
