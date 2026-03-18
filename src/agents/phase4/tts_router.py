@@ -466,8 +466,8 @@ def synthesize_routed_job(job: Dict[str, Any]) -> Dict[str, Any]:
             prompt=payload["prompt"],
             voice_name=payload["voice_id"],
             model=payload["model"],
-            api_key=settings.GEMINI_API_KEY,
-            timeout_seconds=settings.PHASE4_REQUEST_TIMEOUT_SECONDS,
+            project_id=settings.GCP_PROJECT_ID,
+            location=settings.GCP_LOCATION,
         )
     elif validated_job.provider == "elevenlabs":
         result = synthesize_elevenlabs_speech(

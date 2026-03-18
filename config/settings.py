@@ -2,11 +2,16 @@
 from pydantic_settings import BaseSettings
 from pathlib import Path
 
+# LLM Model Tiers
+MODEL_TIER_LOW: str = "gpt-5-mini"
+MODEL_TIER_MEDIUM: str = "o4-mini"
+MODEL_TIER_HIGH: str = "o3"
+
 
 class Settings(BaseSettings):
     """Application settings."""
     #LLM settings
-    QUERY_PRODUCER_MODEL: str = "gpt-4o-mini"
+    QUERY_PRODUCER_MODEL: str = MODEL_TIER_LOW
     QUERY_PRODUCER_TEMPERATURE: float = 0.9
 
     # API Settings
@@ -23,6 +28,8 @@ class Settings(BaseSettings):
     GOOGLE_SEARCH_API_KEY: str = ""
     GOOGLE_SEARCH_ENGINE_ID: str = ""
     GEMINI_API_KEY: str = ""
+    GCP_PROJECT_ID: str = "effortless-lock-329115"
+    GCP_LOCATION: str = "us-central1"
 
     # File Paths
     BASE_DIR: Path = Path(__file__).parent.parent
@@ -62,7 +69,7 @@ class Settings(BaseSettings):
     MIN_CHUNK_WORDS: int = 200  # Minimum words in extracted text to keep chunk
 
     # Phase 2: Chapter Planner Settings
-    CHAPTER_PLANNER_MODEL: str = "gpt-4o-mini"
+    CHAPTER_PLANNER_MODEL: str = MODEL_TIER_LOW
     CHAPTER_PLANNER_TEMPERATURE: float = 0.7
     CHAPTER_PLANNER_BATCH_SIZE: int = 5
     MIN_CHAPTERS: int = 6
@@ -73,19 +80,19 @@ class Settings(BaseSettings):
     CLUSTER_SIMILARITY_THRESHOLD: float = 0.45
 
     # Phase 2: Character Designer Settings
-    CHARACTER_DESIGNER_MODEL: str = "gpt-5.4-mini"
+    CHARACTER_DESIGNER_MODEL: str = MODEL_TIER_HIGH
     CHARACTER_DESIGNER_TEMPERATURE: float = 0.8
 
     # Phase 3: Dialogue Generation Settings
-    DIALOGUE_ENGINE_MODEL: str = "gpt-5.4-nano"
+    DIALOGUE_ENGINE_MODEL: str = MODEL_TIER_HIGH
     DIALOGUE_ENGINE_TEMPERATURE: float = 0.8
-    EXPERT_EXPANDER_MODEL: str = "gpt-5.4-nano"
+    EXPERT_EXPANDER_MODEL: str = MODEL_TIER_HIGH
     EXPERT_EXPANDER_TEMPERATURE: float = 0.7
-    NATURALNESS_MODEL: str = "gpt-5.4-nano"
+    NATURALNESS_MODEL: str = MODEL_TIER_MEDIUM
     NATURALNESS_TEMPERATURE: float = 0.6
-    FACT_CHECKER_MODEL: str = "gpt-4o-mini"
+    FACT_CHECKER_MODEL: str = MODEL_TIER_LOW
     FACT_CHECKER_TEMPERATURE: float = 0.1
-    QA_REVIEWER_MODEL: str = "gpt-5.4-nano"
+    QA_REVIEWER_MODEL: str = MODEL_TIER_MEDIUM
     QA_REVIEWER_TEMPERATURE: float = 0.3
     PHASE3_MAX_RETRIES: int = 2
 
@@ -167,7 +174,7 @@ class Settings(BaseSettings):
     # Cold Open
     PHASE5_COLD_OPEN_MIN_MS: int = 12000
     PHASE5_COLD_OPEN_MAX_MS: int = 25000
-    PHASE5_COLD_OPEN_LLM_MODEL: str = "gpt-5.4-nano"
+    PHASE5_COLD_OPEN_LLM_MODEL: str = MODEL_TIER_MEDIUM
 
     # Chapter Stitcher
     PHASE5_INTRO_MUSIC_DURATION_MS: int = 8000
