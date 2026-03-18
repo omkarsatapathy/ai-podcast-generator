@@ -4,11 +4,15 @@ Generates beat-by-beat dialogue for each chapter and selectively expands
 brief expert utterances for depth and authority.
 """
 
+import re
 from typing import List, Dict
 from langchain_openai import ChatOpenAI
 
 from config.settings import settings
-from src.llm.prompts import DIALOGUE_BEAT_PROMPT, OPENING_BEAT_PROMPT, EXPERT_EXPANSION_PROMPT, BEAT_OBJECTIVES
+from src.llm.prompts import (
+    DIALOGUE_BEAT_PROMPT, OPENING_BEAT_PROMPT, EXPERT_EXPANSION_PROMPT,
+    EXPERT_EXPAND_WITH_NATURALNESS_PROMPT, BEAT_OBJECTIVES,
+)
 from src.models.dialogue import BeatDialogue
 from src.utils.logger import get_logger
 
@@ -99,7 +103,7 @@ def _generate_beat(
         source_chunks_text=_build_source_text(source_chunks),
     )
 
-    llm = _get_llm().with_structured_output(BeatDialogue)
+    llm = _get_llm().with_structured_output(BeatDialogue, method="json_schema")
     persona_map = {p["name"]: p for p in personas}
 
     for attempt in range(3):
@@ -165,7 +169,7 @@ def _generate_opening_beat(
         target_utterances=config["target_utterances"],
     )
 
-    llm = _get_llm().with_structured_output(BeatDialogue)
+    llm = _get_llm().with_structured_output(BeatDialogue, method="json_schema")
     persona_map = {p["name"]: p for p in personas}
 
     for attempt in range(3):
@@ -244,7 +248,11 @@ def expand_expert_utterances(
     utterances: List[Dict], chapter: Dict,
     personas: List[Dict], ranked_chunks: List[Dict],
 ) -> List[Dict]:
-    """Selectively expand short expert utterances for depth."""
+    """Selectively expand short expert utterances for depth.
+
+    Qualifying utterances get a combined expand + naturalness pass
+    (single LLM call) so the naturalness injector can skip them later.
+    """
     source_chunks = _get_chapter_source_chunks(chapter, ranked_chunks)
     chunk_map = {str(c["chunk_id"]): c for c in source_chunks}
 
@@ -274,22 +282,33 @@ def expand_expert_utterances(
 
         target_words = min(int(word_count * 2.5), 150)
 
-        prompt = EXPERT_EXPANSION_PROMPT.format(
+        # Combined expand + naturalness in a single LLM call
+        prompt = EXPERT_EXPAND_WITH_NATURALNESS_PROMPT.format(
             speaker_name=utt["speaker"], original_text=utt["text_clean"],
             current_words=word_count, target_words=target_words,
             speaking_style=expert["speaking_style"],
             vocabulary_level=expert["vocabulary_level"],
+            intent=utt["intent"], emotion=utt["emotion"],
+            beat=utt["beat"],
+            energy_level=chapter.get("energy_level", "medium"),
             previous_text=prev_text[:200], next_text=next_text[:200],
             source_text=source_text, key_points=", ".join(chapter["key_points"]),
         )
 
         try:
-            expanded = llm.invoke(prompt).content.strip().strip('"')
-            expanded_words = len(expanded.split())
+            result = llm.invoke(prompt).content.strip().strip('"')
+            # Strip markers to get clean text for word-count validation
+            clean_result = re.sub(r'\[([A-Z_]+)(?::([a-z0-9.]+))?\]\s*', '', result)
+            expanded_words = len(clean_result.split())
             if word_count < expanded_words <= target_words * 1.5:
-                utt["text_clean"] = expanded
+                utt["text_clean"] = clean_result
+                utt["text_with_naturalness"] = result
+                utt["naturalness_applied"] = True
                 utt["estimated_duration_seconds"] = expanded_words / 2.5
-                logger.info(f"Expanded {utt['utterance_id']}: {word_count} → {expanded_words} words")
+                logger.info(
+                    f"Expanded+naturalness {utt['utterance_id']}: "
+                    f"{word_count} → {expanded_words} words (combined pass)"
+                )
         except Exception as e:
             logger.warning(f"Expansion failed for {utt['utterance_id']}: {e}")
 

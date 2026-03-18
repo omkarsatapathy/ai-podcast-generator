@@ -80,16 +80,16 @@ async def _process_single_batch(
 async def _analyze_chunks_async(ranked_chunks: List[Dict], topic: str) -> List[Dict]:
     """Extract metadata from chunks using parallel LLM calls.
 
-    Processes 5 batches (25 chunks) in parallel for efficiency.
+    Processes 10 batches (20 chunks) in parallel for efficiency.
     """
-    llm = _get_llm().with_structured_output(BatchChunkAnalysis)
+    llm = _get_llm().with_structured_output(BatchChunkAnalysis, method="json_schema")
     batch_size = settings.CHAPTER_PLANNER_BATCH_SIZE
-    parallel_batches = 5  # Process 5 batches simultaneously
+    parallel_batches = 10  # Process 10 batches simultaneously
     analyzed = []
 
     total_batches = (len(ranked_chunks) + batch_size - 1) // batch_size
 
-    # Process in groups of 5 parallel batches (25 chunks at a time)
+    # Process in groups of 10 parallel batches (20 chunks at a time)
     for i in range(0, len(ranked_chunks), batch_size * parallel_batches):
         tasks = []
 
@@ -112,11 +112,11 @@ async def _analyze_chunks_async(ranked_chunks: List[Dict], topic: str) -> List[D
 
 
 def analyze_chunks(ranked_chunks: List[Dict], topic: str) -> List[Dict]:
-    """Extract metadata from chunks using LLM in batches of 5 with parallel processing.
+    """Extract metadata from chunks using LLM in batches of 2 with parallel processing.
 
     Adds topic, subtopics, summary, tone to each chunk.
     Original chunk data is preserved.
-    Processes up to 25 chunks (5 batches) in parallel.
+    Processes up to 20 chunks (10 batches) in parallel.
     """
     return asyncio.run(_analyze_chunks_async(ranked_chunks, topic))
 
@@ -177,7 +177,7 @@ def generate_narrative_sequence(
     clusters: List[List[Dict]], topic: str
 ) -> NarrativeSequence:
     """Use LLM to organize clusters into 3-act podcast structure."""
-    llm = _get_llm().with_structured_output(NarrativeSequence)
+    llm = _get_llm().with_structured_output(NarrativeSequence, method="json_schema")
 
     # Build cluster summary for prompt
     clusters_summary = ""
@@ -214,7 +214,7 @@ def generate_chapter_outlines(
     topic: str,
 ) -> List[ChapterOutline]:
     """Use LLM to generate titles, key_points, hooks for each chapter."""
-    llm = _get_llm().with_structured_output(BatchChapterOutlines)
+    llm = _get_llm().with_structured_output(BatchChapterOutlines, method="json_schema")
 
     # Build detail for each chapter
     chapters_detail = ""

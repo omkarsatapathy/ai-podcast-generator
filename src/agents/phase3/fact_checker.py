@@ -60,7 +60,7 @@ def check_facts(
     llm = ChatOpenAI(
         model=settings.FACT_CHECKER_MODEL,
         temperature=settings.FACT_CHECKER_TEMPERATURE,
-    ).with_structured_output(BatchFactCheckResult)
+    ).with_structured_output(BatchFactCheckResult, method="json_schema")
 
     issues = []
     try:

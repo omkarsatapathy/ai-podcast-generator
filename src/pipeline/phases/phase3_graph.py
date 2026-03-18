@@ -153,23 +153,42 @@ def create_phase3_graph():
     """Create and compile the Phase 3 (Dialogue Generation) subgraph.
 
     Flow: dialogue_engine → expert_expander → naturalness_injector
-          → fact_checker → qa_reviewer → ssml_annotator → END
+          → [fact_checker] → [qa_reviewer] → ssml_annotator → END
+
+    fact_checker and qa_reviewer are optional, controlled by
+    settings.PHASE3_ENABLE_FACT_CHECKER and settings.PHASE3_ENABLE_QA_REVIEWER.
     """
     workflow = StateGraph(Phase3State)
 
     workflow.add_node("dialogue_engine", dialogue_engine_node)
     workflow.add_node("expert_expander", expert_expander_node)
     workflow.add_node("naturalness_injector", naturalness_node)
-    workflow.add_node("fact_checker", fact_checker_node)
-    workflow.add_node("qa_reviewer", qa_reviewer_node)
     workflow.add_node("ssml_annotator", ssml_annotator_node)
 
     workflow.set_entry_point("dialogue_engine")
     workflow.add_edge("dialogue_engine", "expert_expander")
     workflow.add_edge("expert_expander", "naturalness_injector")
-    workflow.add_edge("naturalness_injector", "fact_checker")
-    workflow.add_edge("fact_checker", "qa_reviewer")
-    workflow.add_edge("qa_reviewer", "ssml_annotator")
+
+    # Build the optional middle chain: naturalness → [fact_checker] → [qa_reviewer] → ssml
+    prev = "naturalness_injector"
+
+    if settings.PHASE3_ENABLE_FACT_CHECKER:
+        workflow.add_node("fact_checker", fact_checker_node)
+        workflow.add_edge(prev, "fact_checker")
+        prev = "fact_checker"
+        logger.info("Fact checker ENABLED")
+    else:
+        logger.info("Fact checker DISABLED — skipping")
+
+    if settings.PHASE3_ENABLE_QA_REVIEWER:
+        workflow.add_node("qa_reviewer", qa_reviewer_node)
+        workflow.add_edge(prev, "qa_reviewer")
+        prev = "qa_reviewer"
+        logger.info("QA reviewer ENABLED")
+    else:
+        logger.info("QA reviewer DISABLED — skipping")
+
+    workflow.add_edge(prev, "ssml_annotator")
     workflow.add_edge("ssml_annotator", END)
 
     return workflow.compile()

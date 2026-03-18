@@ -1,8 +1,8 @@
-"""Full pipeline test with per-phase caching and automatic resume.
+"""Full pipeline test with per-phase caching and flexible phase execution.
 
-Runs Phase 1 → Phase 2 → Phase 3 → Phase 4 → Phase 5, caching state
-after each phase. On subsequent runs, automatically resumes from the
-latest cached phase.
+Runs any range of phases (1→5), caching state after each phase.
+On subsequent runs, automatically resumes from the latest cached phase.
+Uses cached results from prior phases when running a specific phase range.
 
 Phase 4 note: when resuming from a Phase 3 cache, only the FIRST
 --minutes of content (default 15) are synthesised to cap TTS cost.
@@ -28,14 +28,23 @@ Usage:
     # Custom topic:
     python tests/test_graph_with_cached.py "AI regulation in Europe"
 
+    # Run only Phase 3 (uses Phase 1-2 cache if available):
+    python tests/test_graph_with_cached.py "will china capture Taiwan in 2026?" --from-phase 3 --until-phase 3
+
+    # Run Phases 2-4 (uses Phase 1 cache if available):
+    python tests/test_graph_with_cached.py "will china capture Taiwan in 2026?" --from-phase 2 --until-phase 4
+
     # Force re-run from scratch (ignore all cache):
     python tests/test_graph_with_cached.py --fresh
 
-    # Force re-run starting at a specific phase:
-    python tests/test_graph_with_cached.py --from-phase 5
+    # Force re-run starting at a specific phase, go to Phase 4:
+    python tests/test_graph_with_cached.py --from-phase 2 --until-phase 4
 
     # Change the Phase 4 content slice (e.g. 20 minutes):
     python tests/test_graph_with_cached.py --minutes 20
+
+    # Combine options:
+    python tests/test_graph_with_cached.py "topic here" --from-phase 3 --until-phase 5 --minutes 25
 """
 
 import os
@@ -495,14 +504,16 @@ PHASE_RUNNERS = {
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run podcast pipeline (Phases 1-5) with per-phase caching.",
+        description="Run podcast pipeline (Phases 1-5) with per-phase caching and flexible phase ranges.",
     )
     parser.add_argument("topic", nargs="*",
                         default=["Why Gold price is falling, and the price forecast by end of year"])
     parser.add_argument("--fresh", action="store_true",
                         help="Ignore all cache and re-run from Phase 1")
     parser.add_argument("--from-phase", type=int, default=None, dest="from_phase",
-                        help="Force re-run starting at this phase (1–5)")
+                        help="Force re-run starting at this phase (1–5, default: auto-resume or 1)")
+    parser.add_argument("--until-phase", type=int, default=5, dest="until_phase",
+                        help="Run phases until this phase (1–5, default: 5)")
     parser.add_argument("--minutes", type=float, default=PHASE4_DEFAULT_MINUTES,
                         dest="minutes",
                         help=f"Minutes of Phase 3 content to synthesise in Phase 4 "
@@ -512,15 +523,26 @@ def main():
     topic = " ".join(args.topic)
     cache_path = _cache_path_for_topic(topic)
 
+    # Validate phase range
+    if args.until_phase < 1 or args.until_phase > 5:
+        print(f"Error: --until-phase must be 1-5 (got {args.until_phase})")
+        return
+    if args.from_phase and (args.from_phase < 1 or args.from_phase > 5):
+        print(f"Error: --from-phase must be 1-5 (got {args.from_phase})")
+        return
+    if args.from_phase and args.from_phase > args.until_phase:
+        print(f"Error: --from-phase ({args.from_phase}) cannot be greater than --until-phase ({args.until_phase})")
+        return
+
     print("\n" + "=" * 70)
     print("  PODCAST PIPELINE (with per-phase caching)")
     print("=" * 70)
     print(f"  Topic:           {topic}")
     print(f"  Cache dir:       {cache_path}")
     print(f"  TTS provider:    {settings.TTS_PROVIDER}")
+    print(f"  Phase range:     {args.from_phase or 'auto'} → {args.until_phase}")
     print(f"  Phase 4 slice:   {args.minutes} min")
     print(f"  Fresh:           {args.fresh}")
-    print(f"  From-phase:      {args.from_phase or 'auto'}")
     print()
 
     if not check_env_vars():
@@ -529,31 +551,41 @@ def main():
 
     # Determine where to resume from
     if args.fresh:
+        start_phase = args.from_phase or 1
         resume_after = 0
     elif args.from_phase:
+        start_phase = args.from_phase
         resume_after = args.from_phase - 1
     else:
-        resume_after = find_latest_cached_phase(cache_path)
+        latest_cached = find_latest_cached_phase(cache_path)
+        start_phase = min(latest_cached + 1, args.until_phase + 1)
+        resume_after = latest_cached
 
-    # Load cached state (if resuming)
+    # Load cached state before the start phase (if available)
     if resume_after > 0:
         state = load_phase_state(cache_path, resume_after)
         if state is None:
-            print(f"  !! Could not load phase {resume_after} cache, starting from scratch")
+            print(f"  !! Could not load phase {resume_after} cache, starting from phase {start_phase}")
             resume_after = 0
             state = None
         else:
             print(f"  >> Resuming after phase {resume_after} (cached)")
             print(f"     Phases 1..{resume_after} skipped — $0 API cost")
+            print(f"     Running phases {start_phase}..{args.until_phase}")
             print()
     else:
         state = None
-        print("  >> Starting from Phase 1 (no usable cache)")
+        if start_phase == 1:
+            print(f"  >> Starting from Phase 1 (no usable cache)")
+        else:
+            print(f"  >> Starting from Phase {start_phase} (no prior cache available)")
+        print(f"     Running phases {start_phase}..{args.until_phase}")
         print()
 
-    # Run remaining phases
+    # Run phases in the requested range
     for phase in PHASES:
-        if phase <= resume_after:
+        # Skip phases before the start or after the end
+        if phase < start_phase or phase > args.until_phase:
             continue
 
         t0 = time.time()

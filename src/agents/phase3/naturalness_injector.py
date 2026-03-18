@@ -48,7 +48,12 @@ def _apply_rule_based_markers(utterances: List[Dict], energy_level: str) -> List
 def inject_naturalness(
     utterances: List[Dict], personas: List[Dict], energy_level: str,
 ) -> List[Dict]:
-    """Apply naturalness markers: rule-based first, then LLM-enhanced."""
+    """Apply naturalness markers: rule-based first, then LLM-enhanced.
+
+    Utterances already processed by the combined expander+naturalness pass
+    (flagged with naturalness_applied=True) are skipped to avoid redundant
+    LLM calls.
+    """
     utterances = _apply_rule_based_markers(utterances, energy_level)
 
     persona_map = {p["name"]: p for p in personas}
@@ -57,7 +62,13 @@ def inject_naturalness(
         temperature=settings.NATURALNESS_TEMPERATURE,
     )
 
+    skipped = 0
     for i, utt in enumerate(utterances):
+        # Skip utterances already handled by combined expand+naturalness
+        if utt.get("naturalness_applied"):
+            skipped += 1
+            continue
+
         persona = persona_map.get(utt["speaker"], {})
         prev_text = utterances[i - 1]["text_clean"][:200] if i > 0 else ""
         next_text = utterances[i + 1]["text_clean"][:200] if i < len(utterances) - 1 else ""
@@ -83,5 +94,8 @@ def inject_naturalness(
     total = sum(
         len(re.findall(r'\[', u["text_with_naturalness"])) for u in utterances
     )
-    logger.info(f"Naturalness complete: {total} markers across {len(utterances)} utterances")
+    logger.info(
+        f"Naturalness complete: {total} markers across {len(utterances)} utterances "
+        f"({skipped} skipped — already processed by expander)"
+    )
     return utterances

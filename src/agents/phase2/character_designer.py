@@ -115,7 +115,7 @@ def design_characters(
         gender_rule=_get_gender_rule(num_speakers),
     )
 
-    llm = _get_llm().with_structured_output(CharacterRoster)
+    llm = _get_llm().with_structured_output(CharacterRoster, method="json_schema")
     logger.info(f"Generating {num_speakers} character personas for topic: '{topic}'")
 
     roster: CharacterRoster = llm.invoke(prompt)

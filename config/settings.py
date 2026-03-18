@@ -2,17 +2,20 @@
 from pydantic_settings import BaseSettings
 from pathlib import Path
 
-# LLM Model Tiers
-MODEL_TIER_LOW: str = "gpt-5-mini"
-MODEL_TIER_MEDIUM: str = "o4-mini"
-MODEL_TIER_HIGH: str = "o3"
+# LLM Model Tiers (Optimized for Podcast Generation - March 2026)
+# HIGH: GPT-5 for creative dialogue, character design, narrative structuring
+# MEDIUM: GPT-5.4-mini for pattern-based enhancement (2x faster than GPT-5 mini)
+# LOW: GPT-5.4-nano for simple tasks like query generation, fact-checking (fastest + cheapest)
+MODEL_TIER_LOW: str = "gpt-5.4-nano"
+MODEL_TIER_MEDIUM: str = "gpt-4.1-mini"
+MODEL_TIER_HIGH: str = "gpt-5.4-mini"
 
 
 class Settings(BaseSettings):
     """Application settings."""
     #LLM settings
     QUERY_PRODUCER_MODEL: str = MODEL_TIER_LOW
-    QUERY_PRODUCER_TEMPERATURE: float = 0.9
+    QUERY_PRODUCER_TEMPERATURE: float = 1.0
 
     # API Settings
     API_TITLE: str = "AI Podcast Generator"
@@ -47,7 +50,7 @@ class Settings(BaseSettings):
     PHASE4_SYNTHESIS_MINUTES_CAP: float = 15.0  # Max minutes of dialogue to synthesise per run
 
     #Google Web search settings
-    SEARCH_RESULTS_PER_QUERY: int = 10
+    SEARCH_RESULTS_PER_QUERY: int = 5
 
     #query Producer settings
     QUERY_GENERATION_TEMPERATURE: float = 0.7
@@ -70,8 +73,8 @@ class Settings(BaseSettings):
 
     # Phase 2: Chapter Planner Settings
     CHAPTER_PLANNER_MODEL: str = MODEL_TIER_LOW
-    CHAPTER_PLANNER_TEMPERATURE: float = 0.7
-    CHAPTER_PLANNER_BATCH_SIZE: int = 5
+    CHAPTER_PLANNER_TEMPERATURE: float = 1.0
+    CHAPTER_PLANNER_BATCH_SIZE: int = 2
     MIN_CHAPTERS: int = 6
     MAX_CHAPTERS: int = 8
     TARGET_DURATION_MINUTES: float = 26.0
@@ -81,19 +84,21 @@ class Settings(BaseSettings):
 
     # Phase 2: Character Designer Settings
     CHARACTER_DESIGNER_MODEL: str = MODEL_TIER_HIGH
-    CHARACTER_DESIGNER_TEMPERATURE: float = 0.8
+    CHARACTER_DESIGNER_TEMPERATURE: float = 1.0
 
     # Phase 3: Dialogue Generation Settings
     DIALOGUE_ENGINE_MODEL: str = MODEL_TIER_HIGH
-    DIALOGUE_ENGINE_TEMPERATURE: float = 0.8
-    EXPERT_EXPANDER_MODEL: str = MODEL_TIER_HIGH
-    EXPERT_EXPANDER_TEMPERATURE: float = 0.7
-    NATURALNESS_MODEL: str = MODEL_TIER_MEDIUM
-    NATURALNESS_TEMPERATURE: float = 0.6
+    DIALOGUE_ENGINE_TEMPERATURE: float = 1.0
+    EXPERT_EXPANDER_MODEL: str = MODEL_TIER_LOW
+    EXPERT_EXPANDER_TEMPERATURE: float = 1.0
+    NATURALNESS_MODEL: str = MODEL_TIER_LOW
+    NATURALNESS_TEMPERATURE: float = 1.0
     FACT_CHECKER_MODEL: str = MODEL_TIER_LOW
-    FACT_CHECKER_TEMPERATURE: float = 0.1
-    QA_REVIEWER_MODEL: str = MODEL_TIER_MEDIUM
-    QA_REVIEWER_TEMPERATURE: float = 0.3
+    FACT_CHECKER_TEMPERATURE: float = 1.0
+    QA_REVIEWER_MODEL: str = MODEL_TIER_LOW
+    QA_REVIEWER_TEMPERATURE: float = 1.0
+    PHASE3_ENABLE_FACT_CHECKER: bool = False
+    PHASE3_ENABLE_QA_REVIEWER: bool = False
     PHASE3_MAX_RETRIES: int = 2
 
     # TTS Provider: "google" or "elevenlabs" — switch on the fly

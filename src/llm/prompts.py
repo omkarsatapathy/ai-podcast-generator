@@ -209,6 +209,46 @@ Rules:
 Return ONLY the expanded text."""
 
 
+EXPERT_EXPAND_WITH_NATURALNESS_PROMPT = """Expand this brief expert podcast utterance to ~{target_words} words with more depth, examples, or context AND weave in naturalness markers so it sounds like spontaneous speech.
+
+Speaker: {speaker_name} ({vocabulary_level} vocabulary)
+Style: {speaking_style}
+Original ({current_words} words): "{original_text}"
+Intent: {intent} | Emotion: {emotion} | Beat: {beat} | Energy: {energy_level}
+
+Context before: "{previous_text}"
+Context after: "{next_text}"
+Chapter key points: {key_points}
+
+Source material for grounding:
+{source_text}
+
+Available naturalness markers:
+- [FILLER:thinking] — "um," before complex statements
+- [FILLER:agreement] — "yeah," at start of responses
+- [PAUSE:short] — 400ms after questions, before lists
+- [PAUSE:long] — 800ms before revelations
+- [EMPHASIS:word] — stress key terms, stats
+- [PACE:fast] — excited, listing things
+- [PACE:slow] — important conclusions
+- [LAUGH:light] — after humor
+- [FALSE_START] — before nuanced points
+
+Expansion rules:
+- Add depth without changing the core message
+- Keep it spoken and conversational, not academic
+- The next utterance must still make sense after expansion
+- Stay grounded in source material
+
+Naturalness rules:
+- Max 2-4 markers for 20-50 words, 4-6 for >50 words
+- Use at most 1 filler ([FILLER:thinking] or [FILLER:agreement]) per utterance
+- Technical speakers get more pauses; casual speakers get occasional fillers
+- No laugh during serious content
+
+Return ONLY the expanded text with naturalness markers already woven in."""
+
+
 NATURALNESS_INJECTION_PROMPT = """Add naturalness markers to this podcast utterance to make it sound like spontaneous speech.
 
 Speaker: {speaker_name} ({role}, {vocabulary_level})

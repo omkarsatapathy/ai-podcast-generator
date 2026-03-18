@@ -35,7 +35,7 @@ def review_chapter(
     llm = ChatOpenAI(
         model=settings.QA_REVIEWER_MODEL,
         temperature=settings.QA_REVIEWER_TEMPERATURE,
-    ).with_structured_output(QAReviewResult)
+    ).with_structured_output(QAReviewResult, method="json_schema")
 
     prompt = QA_REVIEW_PROMPT.format(
         chapter_number=chapter["chapter_number"],

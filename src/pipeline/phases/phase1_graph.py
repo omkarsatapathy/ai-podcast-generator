@@ -103,7 +103,8 @@ def seed_search_node(state: Phase1State) -> Phase1State:
 
 
 def extract_context_node(state: Phase1State) -> Phase1State:
-    """Extract context from top seed results."""
+    """Extract context from top seed results in parallel."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     from src.agents.phase1.query_producer import web_fetch
 
     search_results = state["messages"][-1]["content"]
@@ -115,23 +116,41 @@ def extract_context_node(state: Phase1State) -> Phase1State:
             url = line.split("URL:")[1].strip()
             urls.append(url)
 
-    print(f"📄 FETCHING CONTENT from top {min(3, len(urls))} URLs:")
-    for i, url in enumerate(urls[:3], 1):
+    top_urls = urls[:3]
+    print(f"📄 FETCHING CONTENT from top {len(top_urls)} URLs in parallel:")
+    for i, url in enumerate(top_urls, 1):
         print(f"   {i}. {url}")
     print()
 
-    # Fetch top 3 URLs
-    contexts = []
-    for i, url in enumerate(urls[:3], 1):
-        print(f"   ⏳ Fetching {i}/{min(3, len(urls))}: {url[:80]}...")
+    def fetch_single_url(index: int, url: str) -> tuple[int, str]:
+        """Fetch a single URL and return index and content."""
+        print(f"   ⏳ [{index + 1}/{len(top_urls)}] Fetching: {url[:80]}...")
         content = web_fetch.invoke({"url": url})
-        contexts.append(content)
 
         # Check if fetch was successful
         if "Failed to fetch" in content:
-            print(f"      ❌ Fetch failed")
+            print(f"      ❌ [{index + 1}/{len(top_urls)}] Fetch failed")
         else:
-            print(f"      ✅ Success ({len(content)} chars)")
+            print(f"      ✅ [{index + 1}/{len(top_urls)}] Success ({len(content)} chars)")
+
+        return index, content
+
+    # Fetch all URLs in parallel
+    contexts = [""] * len(top_urls)  # Pre-allocate list to maintain order
+    with ThreadPoolExecutor(max_workers=len(top_urls)) as executor:
+        future_to_index = {
+            executor.submit(fetch_single_url, i, url): i
+            for i, url in enumerate(top_urls)
+        }
+
+        for future in as_completed(future_to_index):
+            try:
+                index, content = future.result()
+                contexts[index] = content
+            except Exception as e:
+                index = future_to_index[future]
+                print(f"      ❌ [{index + 1}/{len(top_urls)}] Exception: {e}")
+                contexts[index] = f"Failed to fetch: {e}"
 
     print()
     state["seed_context"] = "\n\n---\n\n".join(contexts)
@@ -291,18 +310,21 @@ def date_tagging_node(state: Phase1State) -> Phase1State:
 
 
 def execute_searches_node(state: Phase1State) -> Phase1State:
-    """Execute Google searches for all 10 queries."""
-    queries = state["queries"]
+    """Execute Google searches for all queries in parallel."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     from src.tools.web_tools import GoogleSearchTool
+
+    queries = state["queries"]
     search_tool = GoogleSearchTool()
 
-    print("\n🔍 Executing 10 Google searches...")
+    print(f"\n🔍 Executing {len(queries)} Google searches in parallel...")
 
-    for i, query_dict in enumerate(queries, 1):
+    def search_single_query(index: int, query_dict: Dict[str, Any]) -> tuple[int, Dict[str, Any], List[Dict[str, Any]]]:
+        """Execute a single search query and return index, query_dict, and results."""
         query_text = query_dict["query"]
         date_filter = query_dict.get("date_filter")
 
-        print(f"   {i}/10: {query_text[:60]}...")
+        print(f"   [{index + 1}/{len(queries)}] Starting: {query_text[:60]}...")
 
         # Execute search with date filter if provided
         results = search_tool.search(
@@ -311,9 +333,27 @@ def execute_searches_node(state: Phase1State) -> Phase1State:
             date_restrict=date_filter
         )
 
-        # Store results in query dict
-        query_dict["results"] = results
-        print(f"      → {len(results)} results, links: {[r.get('link','')[:50] for r in results[:3]]}")
+        print(f"   [{index + 1}/{len(queries)}] ✓ Completed: {len(results)} results")
+        return index, query_dict, results
+
+    # Execute all searches in parallel
+    with ThreadPoolExecutor(max_workers=min(len(queries), 10)) as executor:
+        # Submit all search tasks
+        future_to_index = {
+            executor.submit(search_single_query, i, query_dict): i
+            for i, query_dict in enumerate(queries)
+        }
+
+        # Collect results as they complete
+        for future in as_completed(future_to_index):
+            try:
+                index, query_dict, results = future.result()
+                # Store results back in the original query dict
+                queries[index]["results"] = results
+            except Exception as e:
+                index = future_to_index[future]
+                print(f"   ❌ Query {index + 1} failed: {e}")
+                queries[index]["results"] = []
 
     total_links = sum(len(q.get("results", [])) for q in queries)
     print(f"✅ All searches completed! Total results: {total_links}\n")
