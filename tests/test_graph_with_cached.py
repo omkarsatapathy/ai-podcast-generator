@@ -357,8 +357,14 @@ def run_phase4(state: dict, target_minutes: float) -> dict:
     print(f"  Full Phase 3 content : {len(all_dialogues)} chapters, {full_dur:.1f} min")
     print(f"  Slice for this run   : {len(trimmed)} chapters, {trimmed_dur:.1f} min "
           f"(target ≤ {target_minutes} min)")
+    _tts_model_map = {
+        "google": settings.GOOGLE_TTS_MODEL,
+        "openai": settings.OPENAI_TTS_MODEL,
+        "elevenlabs": settings.ELEVENLABS_TTS_MODEL,
+        "sarvam": settings.SARVAM_TTS_MODEL,
+    }
     print(f"  TTS provider         : {settings.TTS_PROVIDER}")
-    print(f"  TTS model            : {settings.GOOGLE_TTS_MODEL}")
+    print(f"  TTS model            : {_tts_model_map.get(settings.TTS_PROVIDER, settings.TTS_PROVIDER)}")
     print(f"  Max workers          : {settings.PHASE4_MAX_WORKERS}")
     print(f"  Max retries/job      : {settings.PHASE4_MAX_RETRIES}")
     print(f"  Failure ratio cap    : {settings.PHASE4_MAX_FAILURE_RATIO * 100:.0f}%")

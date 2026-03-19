@@ -8,11 +8,11 @@ from typing import List, Dict, Any
 import asyncio
 import numpy as np
 from sklearn.cluster import AgglomerativeClustering
-from langchain_openai import ChatOpenAI
 import faiss
 
 from config.settings import settings
 from src.agents.phase1.dedup_relevance_scorer import get_model
+from src.api_factory.llm import get_llm
 from src.llm.prompts import (
     CHUNK_ANALYSIS_PROMPT,
     NARRATIVE_SEQUENCE_PROMPT,
@@ -24,18 +24,16 @@ from src.models.chapter import (
     BatchChapterOutlines,
     ChapterOutline,
 )
-from src.utils.cost_tracker import cost_tracker
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
-def _get_llm() -> ChatOpenAI:
+def _get_llm():
     """Get configured LLM for chapter planner."""
-    return ChatOpenAI(
-        model=settings.CHAPTER_PLANNER_MODEL,
+    return get_llm(
+        tier=settings.CHAPTER_PLANNER_MODEL,
         temperature=settings.CHAPTER_PLANNER_TEMPERATURE,
-        callbacks=[cost_tracker],
     )
 
 

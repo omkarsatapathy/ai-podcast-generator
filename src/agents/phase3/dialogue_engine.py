@@ -6,15 +6,14 @@ brief expert utterances for depth and authority.
 
 import re
 from typing import List, Dict
-from langchain_openai import ChatOpenAI
 
 from config.settings import settings
+from src.api_factory.llm import get_llm
 from src.llm.prompts import (
     DIALOGUE_BEAT_PROMPT, OPENING_BEAT_PROMPT, EXPERT_EXPANSION_PROMPT,
     EXPERT_EXPAND_WITH_NATURALNESS_PROMPT, BEAT_OBJECTIVES,
 )
 from src.models.dialogue import BeatDialogue
-from src.utils.cost_tracker import cost_tracker
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -30,11 +29,10 @@ BEAT_CONFIG = {
 }
 
 
-def _get_llm(model: str = None, temperature: float = None) -> ChatOpenAI:
-    return ChatOpenAI(
-        model=model or settings.DIALOGUE_ENGINE_MODEL,
+def _get_llm(tier: str = None, temperature: float = None):
+    return get_llm(
+        tier=tier or settings.DIALOGUE_ENGINE_MODEL,
         temperature=temperature if temperature is not None else settings.DIALOGUE_ENGINE_TEMPERATURE,
-        callbacks=[cost_tracker],
     )
 
 

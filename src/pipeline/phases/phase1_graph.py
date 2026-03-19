@@ -14,13 +14,11 @@ This subgraph is:
 """
 
 from typing import List, Dict, Any, TypedDict
-from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, END
 
 from config.settings import settings
 from src.tools.web_tools import get_current_date
-from src.utils.cost_tracker import cost_tracker
+from src.api_factory.llm import get_llm
 
 
 # ==================== STATE ====================
@@ -166,7 +164,7 @@ def generate_queries_node(state: Phase1State) -> Phase1State:
         state["query_rewrite_count"] += 1
         print(f"🔄 QUERY REWRITE #{state['query_rewrite_count']}/{settings.MAX_QUERY_REWRITE_ATTEMPTS}")
 
-    llm = ChatOpenAI(model=settings.QUERY_PRODUCER_MODEL, temperature=settings.QUERY_PRODUCER_TEMPERATURE, callbacks=[cost_tracker])
+    llm = get_llm(tier=settings.QUERY_PRODUCER_MODEL, temperature=settings.QUERY_PRODUCER_TEMPERATURE)
 
     topic = state["topic"]
     freshness = state["freshness"]
@@ -242,7 +240,20 @@ CHAPTER_TITLES:
 ...
 10. [tenth chapter title]"""
 
-    response = llm.invoke([SystemMessage(content=system_prompt)])
+    max_llm_attempts = 3
+    response = None
+    for attempt in range(1, max_llm_attempts + 1):
+        try:
+            response = llm.invoke([{"role": "user", "content": system_prompt}])
+            if response.content is None:
+                raise ValueError("LLM returned None content")
+            break
+        except Exception as exc:
+            print(f"   ⚠️  LLM attempt {attempt}/{max_llm_attempts} failed: {exc}")
+            if attempt == max_llm_attempts:
+                raise RuntimeError(
+                    f"generate_queries_node: LLM failed after {max_llm_attempts} attempts. Last error: {exc}"
+                ) from exc
 
     # Parse response into queries and chapter titles sections
     response_text = response.content
@@ -313,12 +324,12 @@ def date_tagging_node(state: Phase1State) -> Phase1State:
 def execute_searches_node(state: Phase1State) -> Phase1State:
     """Execute Google searches for all queries in parallel."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
-    from src.tools.web_tools import GoogleSearchTool
+    from src.api_factory.search import get_search
 
     queries = state["queries"]
-    search_tool = GoogleSearchTool()
+    search_tool = get_search()
 
-    print(f"\n🔍 Executing {len(queries)} Google searches in parallel...")
+    print(f"\n🔍 Executing {len(queries)} searches in parallel...")
 
     def search_single_query(index: int, query_dict: Dict[str, Any]) -> tuple[int, Dict[str, Any], List[Dict[str, Any]]]:
         """Execute a single search query and return index, query_dict, and results."""

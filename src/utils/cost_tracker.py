@@ -1,11 +1,9 @@
-"""LLM Cost Tracker — automatic token and cost accumulation via LangChain callbacks.
+"""LLM Cost Tracker — token and cost accumulation for all providers.
 
 Usage:
     from src.utils.cost_tracker import cost_tracker
 
-    llm = ChatOpenAI(model="gpt-5.4-nano", callbacks=[cost_tracker])
-    llm.invoke(prompt)  # cost_tracker.on_llm_end fires automatically
-
+    cost_tracker.track("gpt-5.4-nano", input_tokens=100, output_tokens=50)
     cost_tracker.print_summary()
 """
 
@@ -13,43 +11,33 @@ import threading
 from collections import defaultdict
 from typing import Any, Dict
 
-from langchain_core.callbacks import BaseCallbackHandler
-from langchain_core.outputs import LLMResult
-
 from config.settings import MODEL_PRICING, USD_TO_INR
 
 
-class CostTracker(BaseCallbackHandler):
-    """Accumulates token usage and cost across all LLM calls.
+class CostTracker:
+    """Accumulates token usage and cost across all LLM/TTS calls.
 
     Thread-safe — safe for use with asyncio.gather and ThreadPoolExecutor.
     """
 
     def __init__(self) -> None:
-        super().__init__()
         self._lock = threading.Lock()
         self._usage: Dict[str, Dict[str, int]] = defaultdict(
             lambda: {"calls": 0, "input_tokens": 0, "output_tokens": 0}
         )
 
-    def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
-        """Called after every LLM call. Extracts token usage from response."""
-        llm_output = response.llm_output or {}
-        token_usage = llm_output.get("token_usage", {})
-
-        input_tokens = token_usage.get("prompt_tokens", 0)
-        output_tokens = token_usage.get("completion_tokens", 0)
-
+    def track(self, model: str, input_tokens: int = 0, output_tokens: int = 0) -> None:
+        """Record token usage for any LLM or TTS API call."""
         if input_tokens == 0 and output_tokens == 0:
             return
-
-        model = llm_output.get("model_name", "unknown")
-
         with self._lock:
             entry = self._usage[model]
             entry["calls"] += 1
             entry["input_tokens"] += input_tokens
             entry["output_tokens"] += output_tokens
+
+    # Alias for backward compatibility with TTS tracking code
+    track_tts = track
 
     def _resolve_pricing(self, model: str) -> dict | None:
         """Return pricing entry for *model*, tolerating date-suffixed names.
@@ -141,20 +129,6 @@ class CostTracker(BaseCallbackHandler):
             f"Rs {s['total_cost_inr']:>13.6f}"
         )
         print("=" * 80)
-
-    def track_tts(self, model: str, input_tokens: int, output_tokens: int = 0) -> None:
-        """Manually record a Vertex AI / ElevenLabs TTS API call.
-
-        Call this after each successful TTS synthesis since TTS providers
-        don't use LangChain callbacks.
-        """
-        if input_tokens == 0 and output_tokens == 0:
-            return
-        with self._lock:
-            entry = self._usage[model]
-            entry["calls"] += 1
-            entry["input_tokens"] += input_tokens
-            entry["output_tokens"] += output_tokens
 
     def reset(self) -> None:
         """Clear all accumulated data. Useful for test isolation."""

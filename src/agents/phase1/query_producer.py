@@ -5,12 +5,10 @@ This agent uses LangChain tools and a LangGraph workflow to:
 2. Generate 10 diverse search queries
 3. Execute Google searches with appropriate date filters
 """
-from langchain_core.messages import HumanMessage
-from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
 
 from src.tools.web_tools import GoogleSearchTool, WebFetchTool, get_current_date
-from src.utils.cost_tracker import cost_tracker
+from src.api_factory.llm import get_llm
 from src.models.query_models import QueryProducerOutput, SearchQuery
 from src.pipeline.phases.phase1_graph import create_phase1_graph
 
@@ -101,7 +99,7 @@ def classify_freshness(topic: str) -> str:
     has_recent_keywords = any(kw in topic_lower for kw in recent_keywords)
 
     # Use LLM for final decision
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, callbacks=[cost_tracker])
+    llm = get_llm(tier="low", temperature=0)
 
     prompt = f"""Classify this topic as either 'recent' (time-sensitive news/events) or 'evergreen' (timeless topic).
 
@@ -114,7 +112,7 @@ Respond with ONLY the word 'recent' or 'evergreen' followed by a brief reason.
 Format: <classification>: <reason>
 """
 
-    response = llm.invoke([HumanMessage(content=prompt)])
+    response = llm.invoke([{"role": "user", "content": prompt}])
     print(f"🏷️  FRESHNESS CLASSIFICATION RESULT: {response.content}\n")
     return response.content
 

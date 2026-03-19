@@ -6,12 +6,11 @@ Output: List of CharacterPersona dicts saved to phase2_results.json
 """
 
 from typing import List, Dict, Any
-from langchain_openai import ChatOpenAI
 
 from config.settings import settings
+from src.api_factory.llm import get_llm
 from src.llm.prompts import CHARACTER_DESIGNER_PROMPT
 from src.models.character import CharacterRoster, CharacterPersona
-from src.utils.cost_tracker import cost_tracker
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -82,12 +81,11 @@ def _get_gender_rule(num_speakers: int) -> str:
     return "- For 2 speakers, choose any gender mix that fits the voices best."
 
 
-def _get_llm() -> ChatOpenAI:
+def _get_llm():
     """Get configured LLM for character designer."""
-    return ChatOpenAI(
-        model=settings.CHARACTER_DESIGNER_MODEL,
+    return get_llm(
+        tier=settings.CHARACTER_DESIGNER_MODEL,
         temperature=settings.CHARACTER_DESIGNER_TEMPERATURE,
-        callbacks=[cost_tracker],
     )
 
 

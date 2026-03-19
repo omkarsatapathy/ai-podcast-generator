@@ -8,11 +8,9 @@ import random
 import re
 from typing import List, Dict
 
-from langchain_openai import ChatOpenAI
-
 from config.settings import settings
+from src.api_factory.llm import get_llm
 from src.llm.prompts import NATURALNESS_INJECTION_PROMPT
-from src.utils.cost_tracker import cost_tracker
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -58,10 +56,9 @@ def inject_naturalness(
     utterances = _apply_rule_based_markers(utterances, energy_level)
 
     persona_map = {p["name"]: p for p in personas}
-    llm = ChatOpenAI(
-        model=settings.NATURALNESS_MODEL,
+    llm = get_llm(
+        tier=settings.NATURALNESS_MODEL,
         temperature=settings.NATURALNESS_TEMPERATURE,
-        callbacks=[cost_tracker],
     )
 
     skipped = 0

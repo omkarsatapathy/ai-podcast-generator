@@ -59,14 +59,11 @@ def _scan_script_for_candidates(
     """Call LLM to identify cold open candidates."""
 
     try:
-        from langchain_openai import ChatOpenAI
-        from src.utils.cost_tracker import cost_tracker
+        from src.api_factory.llm import get_llm
 
-        llm = ChatOpenAI(
-            model=settings.PHASE5_COLD_OPEN_LLM_MODEL,
+        llm = get_llm(
+            tier=settings.PHASE5_COLD_OPEN_LLM_MODEL,
             temperature=0.3,
-            request_timeout=30,
-            callbacks=[cost_tracker],
         )
         prompt = COLD_OPEN_USER_PROMPT.format(script_text=script_text)
         response = llm.invoke(

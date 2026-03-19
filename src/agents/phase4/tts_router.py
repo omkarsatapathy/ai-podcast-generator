@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import html
 import json
+import os
 import random
 import re
 import threading
@@ -28,9 +29,7 @@ from src.models.phase4 import (
     TTSJob,
 )
 from src.tools.audio_tools import inspect_wav_file, validate_wav_file, write_audio_bytes_atomic
-from src.tools.elevenlabs_tts import synthesize_elevenlabs_speech
-from src.tools.gemini_tts import synthesize_gemini_speech
-from src.tools.openai_tts import synthesize_openai_speech
+from src.api_factory.voice import synthesize_speech
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -261,7 +260,12 @@ def plan_tts_jobs(
         chapter_number = chapter["chapter_number"]
         for utterance in chapter.get("utterances", []):
             assignment = speaker_voice_map[utterance["speaker"]]
-            segment_texts = _split_for_synthesis(_plain_text_for_job(utterance))
+            _max_chars = (
+                settings.SARVAM_TTS_MAX_CHARS_PER_JOB
+                if assignment["provider"] == "sarvam"
+                else settings.PHASE4_MAX_TEXT_CHARS_PER_JOB
+            )
+            segment_texts = _split_for_synthesis(_plain_text_for_job(utterance), max_chars=_max_chars)
             segment_count = len(segment_texts)
             estimated_duration = utterance.get("estimated_duration_seconds", 0.0)
             segment_duration = estimated_duration / segment_count if segment_count else estimated_duration
@@ -395,6 +399,14 @@ def build_provider_payload(job: TTSJob) -> Dict[str, Any]:
             "instructions": instructions,
         }
 
+    if job.provider == "sarvam":
+        return {
+            "provider": "sarvam",
+            "model": job.model,
+            "voice_id": job.voice_id,
+            "text": text,
+        }
+
     raise ValueError(f"Unsupported TTS provider: {job.provider}")
 
 
@@ -489,7 +501,8 @@ def synthesize_routed_job(job: Dict[str, Any]) -> Dict[str, Any]:
     _throttle_api_call()
     try:
         if validated_job.provider == "google":
-            result = synthesize_gemini_speech(
+            result = synthesize_speech(
+                provider="google",
                 prompt=payload["prompt"],
                 voice_name=payload["voice_id"],
                 model=payload["model"],
@@ -502,28 +515,38 @@ def synthesize_routed_job(job: Dict[str, Any]) -> Dict[str, Any]:
                 input_tokens=result.get("input_tokens", 0),
             )
         elif validated_job.provider == "elevenlabs":
-            result = synthesize_elevenlabs_speech(
+            result = synthesize_speech(
+                provider="elevenlabs",
                 text=payload["text"],
                 voice_id=payload["voice_id"],
                 model=payload["model"],
-                api_key=settings.ELEVENLABS_API_KEY,
+                api_key=os.environ.get("ELEVENLABS_API_KEY", ""),
                 timeout_seconds=settings.PHASE4_REQUEST_TIMEOUT_SECONDS,
             )
         elif validated_job.provider == "openai":
-            result = synthesize_openai_speech(
+            result = synthesize_speech(
+                provider="openai",
                 text=payload["text"],
                 voice=payload["voice_id"],
                 model=payload["model"],
-                api_key=settings.OPENAI_API_KEY,
+                api_key=os.environ["OPENAI_API_KEY"],
                 instructions=payload.get("instructions", ""),
                 timeout_seconds=settings.PHASE4_REQUEST_TIMEOUT_SECONDS,
             )
             from src.utils.cost_tracker import cost_tracker
-            # Approximate token count from character length (1 token ≈ 4 chars)
             estimated_tokens = max(1, len(payload.get("text", "")) // 4)
             cost_tracker.track_tts(
                 model=payload["model"],
                 input_tokens=estimated_tokens,
+            )
+        elif validated_job.provider == "sarvam":
+            result = synthesize_speech(
+                provider="sarvam",
+                text=payload["text"],
+                voice=payload.get("voice_id", "meera"),
+                model=payload.get("model", settings.SARVAM_TTS_MODEL),
+                api_key=os.environ.get("SARVAM_API_KEY", ""),
+                timeout_seconds=settings.PHASE4_REQUEST_TIMEOUT_SECONDS,
             )
         else:
             raise ValueError(f"Unsupported TTS provider: {validated_job.provider}")
@@ -928,13 +951,14 @@ def _plain_text_for_job(job: Dict[str, Any]) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _split_for_synthesis(text: str) -> List[str]:
+def _split_for_synthesis(text: str, max_chars: int | None = None) -> List[str]:
     """Split only when an utterance is unusually long for a single TTS call."""
 
+    limit = max_chars or settings.PHASE4_MAX_TEXT_CHARS_PER_JOB
     text = text.strip()
     if not text:
         return [text]
-    if len(text) <= settings.PHASE4_MAX_TEXT_CHARS_PER_JOB:
+    if len(text) <= limit:
         return [text]
 
     segments: List[str] = []
@@ -944,7 +968,7 @@ def _split_for_synthesis(text: str) -> List[str]:
         if not candidate:
             continue
         proposed = f"{current} {candidate}".strip()
-        if current and len(proposed) > settings.PHASE4_MAX_TEXT_CHARS_PER_JOB:
+        if current and len(proposed) > limit:
             segments.append(current)
             current = candidate
         else:
@@ -953,10 +977,10 @@ def _split_for_synthesis(text: str) -> List[str]:
     if current:
         segments.append(current)
 
-    if any(len(segment) > settings.PHASE4_MAX_TEXT_CHARS_PER_JOB for segment in segments):
+    if any(len(segment) > limit for segment in segments):
         return [
-            text[i:i + settings.PHASE4_MAX_TEXT_CHARS_PER_JOB].strip()
-            for i in range(0, len(text), settings.PHASE4_MAX_TEXT_CHARS_PER_JOB)
+            text[i:i + limit].strip()
+            for i in range(0, len(text), limit)
         ]
     return segments or [text]
 
@@ -1006,6 +1030,16 @@ def _resolve_provider_voice(provider: str, role: str, persona: Dict[str, Any]) -
         source = "persona" if persona.get("openai_tts_voice") == voice_id else "default"
         return voice_id.lower(), source, None
 
+    if provider == "sarvam":
+        voice_id = (
+            persona.get("sarvam_tts_voice")
+            or _default_voice_for_role(provider, role)
+        )
+        if not voice_id:
+            return None, "missing", "No Sarvam TTS voice configured"
+        source = "persona" if persona.get("sarvam_tts_voice") == voice_id else "default"
+        return voice_id, source, None
+
     return None, "missing", f"Unsupported provider '{provider}'"
 
 
@@ -1034,12 +1068,19 @@ def _default_voice_for_role(provider: str, role: str) -> str | None:
             "skeptic": settings.OPENAI_TTS_SKEPTIC_VOICE,
         }.get(role, settings.OPENAI_TTS_HOST_VOICE)
 
+    if provider == "sarvam":
+        return {
+            "host": settings.SARVAM_TTS_HOST_VOICE,
+            "expert": settings.SARVAM_TTS_EXPERT_VOICE,
+            "skeptic": settings.SARVAM_TTS_SKEPTIC_VOICE,
+        }.get(role, settings.SARVAM_TTS_HOST_VOICE)
+
     return None
 
 
 def _provider_name(value: str) -> str:
     provider = (value or "google").strip().lower()
-    if provider not in {"google", "elevenlabs", "openai"}:
+    if provider not in {"google", "elevenlabs", "openai", "sarvam"}:
         raise ValueError(f"Unsupported TTS provider: {value}")
     return provider
 
@@ -1058,6 +1099,8 @@ def _model_for_provider(provider: str | None) -> str | None:
         return settings.ELEVENLABS_TTS_MODEL
     if provider == "openai":
         return settings.OPENAI_TTS_MODEL
+    if provider == "sarvam":
+        return settings.SARVAM_TTS_MODEL
     return None
 
 
