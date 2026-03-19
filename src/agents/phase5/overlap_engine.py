@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Set, Tuple
 
 from pydub import AudioSegment
 
@@ -100,17 +100,32 @@ def _apply_interrupt_ops(
     interrupt_ops: List[Dict[str, Any]],
     loaded: Dict[str, AudioSegment],
     clips: List[Dict[str, Any]],
-) -> Tuple[AudioSegment, Dict[str, Dict[str, int]]]:
-    """Apply INTERRUPT directives — shift next speaker backwards to overlap."""
+) -> Tuple[AudioSegment, Dict[str, Dict[str, int]], Set[str]]:
+    """Apply INTERRUPT directives — superimpose both speakers for up to
+    PHASE5_INTERRUPT_MAX_DUAL_PLAY_MS, then fade out the interrupted speaker.
+
+    Returns (timeline, timestamp_map, interrupted_uids) where
+    *interrupted_uids* marks boundaries that crossfades should skip.
+    """
 
     sorted_clips = sorted(clips, key=lambda c: c.get("order_index", 0))
     clip_order = [c["utterance_id"] for c in sorted_clips]
+    uid_to_order = {c["utterance_id"]: c.get("order_index", 0) for c in clips}
 
-    for op in interrupt_ops:
+    max_dual_ms = settings.PHASE5_INTERRUPT_MAX_DUAL_PLAY_MS
+    fade_out_ms = settings.PHASE5_INTERRUPT_FADE_OUT_MS
+    interrupted_uids: Set[str] = set()
+
+    # Process ops in clip order so timestamp shifts propagate correctly
+    ops_sorted = sorted(
+        interrupt_ops,
+        key=lambda op: uid_to_order.get(op.get("utterance_id", ""), 0),
+    )
+
+    for op in ops_sorted:
         target_uid = op.get("utterance_id", "")
         overlap_ms = int(op.get("duration_ms", 200))
 
-        # Find the next utterance after the interrupted one
         if target_uid not in clip_order:
             continue
         idx = clip_order.index(target_uid)
@@ -127,24 +142,71 @@ def _apply_interrupt_ops(
         if next_clip is None:
             continue
 
-        # Shift next clip backwards by overlap_ms
-        new_start = max(next_ts["start_ms"] - overlap_ms, target_ts["start_ms"] + 100)
-        actual_overlap = next_ts["start_ms"] - new_start
+        # --- Where the interrupter begins (shifted backwards) ---
+        overlap_start = max(
+            next_ts["start_ms"] - overlap_ms,
+            target_ts["start_ms"] + 100,
+        )
+        actual_overlap = next_ts["start_ms"] - overlap_start
         if actual_overlap <= 0:
             continue
 
-        # Extract and overlay the overlapping region
-        overlap_point = new_start
-        tail = timeline[overlap_point:next_ts["start_ms"]]
-        if len(tail) > 0:
-            tail = tail + settings.PHASE5_INTERRUPT_VOLUME_REDUCTION_DB
-            interrupter = next_clip[:actual_overlap]
-            mixed = tail.overlay(interrupter)
-            timeline = timeline[:overlap_point] + mixed + timeline[next_ts["start_ms"]:]
+        # Cap simultaneous playback to max_dual_ms
+        dual_play_ms = min(actual_overlap, max_dual_ms)
 
-        timestamp_map[next_uid]["start_ms"] = new_start
+        # --- Build the superimposed section ---
+        # Interrupted speaker's continuing audio during dual-play window
+        old_audio = timeline[overlap_start: overlap_start + dual_play_ms]
+        # Interrupter's audio for the same window
+        new_audio = next_clip[:dual_play_ms]
 
-    return timeline, timestamp_map
+        # Trim to the shorter of the two to prevent length mismatch
+        seg_len = min(len(old_audio), len(new_audio))
+        if seg_len <= 0:
+            continue
+        old_audio = old_audio[:seg_len]
+        new_audio = new_audio[:seg_len]
+
+        # Fade out the interrupted speaker at the tail of dual play
+        actual_fade = min(fade_out_ms, seg_len // 2)
+        if actual_fade > 0:
+            old_audio = old_audio.fade_out(actual_fade)
+
+        # Slight volume reduction on interrupted speaker so interrupter cuts through
+        old_audio = old_audio + settings.PHASE5_INTERRUPT_VOLUME_REDUCTION_DB
+
+        # Superimpose: both speakers audible simultaneously
+        mixed = old_audio.overlay(new_audio)
+
+        # --- Rebuild timeline without duplication ---
+        before = timeline[:overlap_start]
+        remaining_interrupter = next_clip[seg_len:]  # rest of interrupter after dual section
+        after = timeline[next_ts["end_ms"]:]  # everything past original next-clip end
+
+        old_len = len(timeline)
+        timeline = before + mixed + remaining_interrupter + after
+        new_len = len(timeline)
+        shift = new_len - old_len
+
+        # --- Update timestamp map ---
+        new_next_end = overlap_start + seg_len + len(remaining_interrupter)
+        timestamp_map[next_uid] = {
+            "start_ms": overlap_start,
+            "end_ms": new_next_end,
+        }
+
+        for subsequent_uid in clip_order[idx + 2:]:
+            if subsequent_uid in timestamp_map:
+                timestamp_map[subsequent_uid]["start_ms"] += shift
+                timestamp_map[subsequent_uid]["end_ms"] += shift
+
+        interrupted_uids.add(target_uid)
+        logger.debug(
+            "Interrupt: %s overlapped by %s — dual play %d ms (cap %d ms)",
+            target_uid, next_uid, seg_len, max_dual_ms,
+        )
+
+    return timeline, timestamp_map, interrupted_uids
 
 
 def _apply_backchannel_ops(
@@ -221,15 +283,25 @@ def _apply_crossfades(
     clips: List[Dict[str, Any]],
     timestamp_map: Dict[str, Dict[str, int]],
     fade_ms: int,
+    skip_uids: Set[str] | None = None,
 ) -> AudioSegment:
-    """Apply crossfades at speaker-turn boundaries."""
+    """Apply crossfades at speaker-turn boundaries.
+
+    Boundaries whose *current* utterance ID is in *skip_uids* are skipped
+    because an interrupt already handled the transition there.
+    """
 
     sorted_clips = sorted(clips, key=lambda c: c.get("order_index", 0))
+    if skip_uids is None:
+        skip_uids = set()
 
     for i in range(len(sorted_clips) - 1):
         curr = sorted_clips[i]
         nxt = sorted_clips[i + 1]
         if curr.get("speaker") == nxt.get("speaker"):
+            continue
+        # Skip boundaries already handled by interrupt superimposition
+        if curr["utterance_id"] in skip_uids:
             continue
 
         curr_ts = timestamp_map.get(curr["utterance_id"])
@@ -282,8 +354,9 @@ def run_overlap_engine(
         timing_directives, clips
     )
 
+    interrupted_uids: Set[str] = set()
     if interrupt_ops:
-        timeline, timestamp_map = _apply_interrupt_ops(
+        timeline, timestamp_map, interrupted_uids = _apply_interrupt_ops(
             timeline, timestamp_map, interrupt_ops, loaded, clips
         )
         report.interrupts_applied = len(interrupt_ops)
@@ -296,9 +369,10 @@ def run_overlap_engine(
         timeline = _apply_laugh_ops(timeline, timestamp_map, laugh_ops)
         report.laughs_applied = len(laugh_ops)
 
-    # Crossfades
+    # Crossfades (skip boundaries already handled by interrupts)
     timeline = _apply_crossfades(
-        timeline, clips, timestamp_map, settings.PHASE5_CROSSFADE_MS
+        timeline, clips, timestamp_map, settings.PHASE5_CROSSFADE_MS,
+        skip_uids=interrupted_uids,
     )
 
     # Export

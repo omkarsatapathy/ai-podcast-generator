@@ -2,10 +2,6 @@
 from pydantic_settings import BaseSettings
 from pathlib import Path
 
-# LLM Model Tiers (Optimized for Podcast Generation - March 2026)
-# HIGH: GPT-5 for creative dialogue, character design, narrative structuring
-# MEDIUM: GPT-5.4-mini for pattern-based enhancement (2x faster than GPT-5 mini)
-# LOW: GPT-5.4-nano for simple tasks like query generation, fact-checking (fastest + cheapest)
 MODEL_TIER_LOW: str = "gpt-5.4-nano"
 MODEL_TIER_MEDIUM: str = "gpt-4.1-mini"
 MODEL_TIER_HIGH: str = "gpt-5.4-mini"
@@ -19,9 +15,11 @@ MODEL_PRICING: dict[str, dict[str, float]] = {
     "gpt-4o-mini":   {"input_per_million": 0.15, "output_per_million": 0.60},
     # Vertex AI Gemini TTS models — billed on input tokens only (audio is the output)
     # Pricing source: https://cloud.google.com/vertex-ai/generative-ai/pricing (verify periodically)
-    "gemini-2.5-pro-preview-tts": {"input_per_million": 7.50, "output_per_million": 0.0},
+    "gemini-2.5-pro-preview-tts": {"input_per_million": 75.0, "output_per_million": 0.0},
     "gemini-2.5-pro-tts":         {"input_per_million": 3.50, "output_per_million": 0.0},
     "gemini-2.5-flash-tts":       {"input_per_million": 0.10, "output_per_million": 0.0},
+    # OpenAI TTS models — billed per 1M characters input
+    "gpt-4o-mini-tts":            {"input_per_million": 12.00, "output_per_million": 0.0},
 }
 
 # Currency conversion
@@ -63,7 +61,7 @@ class Settings(BaseSettings):
     # Processing Settings
     MIN_PODCAST_DURATION_SEC: int = 900  # 15 minutes
     MAX_PODCAST_DURATION_SEC: int = 1800  # 30 minutes
-    NUM_SPEAKERS: int = 2
+    NUM_SPEAKERS: int = 3
     PHASE4_SYNTHESIS_MINUTES_CAP: float = 15.0  # Max minutes of dialogue to synthesise per run
 
     #Google Web search settings
@@ -118,18 +116,20 @@ class Settings(BaseSettings):
     PHASE3_ENABLE_QA_REVIEWER: bool = False
     PHASE3_MAX_RETRIES: int = 2
 
-    # TTS Provider: "google" or "elevenlabs" — switch on the fly
-    TTS_PROVIDER: str = "google"
-    TTS_FALLBACK_PROVIDER: str = ""
+    # TTS Provider: "google", "openai", or "elevenlabs" — switch on the fly
+    TTS_PROVIDER: str = 'openai' #"google"
+    TTS_FALLBACK_PROVIDER: str = "openai"
     ELEVENLABS_API_KEY: str = ""
     GOOGLE_TTS_MODEL: str = "gemini-2.5-pro-preview-tts"
     ELEVENLABS_TTS_MODEL: str = "eleven_v3"
+    OPENAI_TTS_MODEL: str = "gpt-4o-mini-tts"
     PHASE4_RAW_AUDIO_DIR: Path = AUDIO_DIR / "raw"
-    PHASE4_MAX_WORKERS: int = 1
+    PHASE4_MAX_WORKERS: int = 6
+    PHASE4_MAX_CONCURRENT_API_CALLS: int = 6  # semaphore cap on simultaneous Gemini calls
     PHASE4_MAX_RETRIES: int = 3
     PHASE4_REQUEST_TIMEOUT_SECONDS: int = 60
     PHASE4_RETRY_BASE_SECONDS: float = 10.0
-    PHASE4_MIN_REQUEST_GAP_SECONDS: float = 3.0  # min seconds between API calls
+    PHASE4_MIN_REQUEST_GAP_SECONDS: float = 3.0  # kept for reference; no longer used for gating
     PHASE4_MAX_TEXT_CHARS_PER_JOB: int = 1200
     PHASE4_DEFAULT_TURN_GAP_SECONDS: float = 0.2
     PHASE4_MIN_DURATION_SECONDS: float = 0.15
@@ -157,6 +157,13 @@ class Settings(BaseSettings):
     ELEVENLABS_HOST_VOICE_ID: str = ""
     ELEVENLABS_EXPERT_VOICE_ID: str = ""
     ELEVENLABS_SKEPTIC_VOICE_ID: str = ""
+    OPENAI_TTS_ALLOWED_VOICES: tuple[str, ...] = (
+        "alloy", "ash", "ballad", "cedar", "coral", "echo",
+        "fable", "marin", "nova", "onyx", "sage", "shimmer",
+    )
+    OPENAI_TTS_HOST_VOICE: str = "coral"
+    OPENAI_TTS_EXPERT_VOICE: str = "onyx"
+    OPENAI_TTS_SKEPTIC_VOICE: str = "nova"
 
     # Phase 5: Audio Post-Processing
     PHASE5_TARGET_SAMPLE_RATE: int = 44100
@@ -169,6 +176,8 @@ class Settings(BaseSettings):
     PHASE5_INTERRUPT_VOLUME_REDUCTION_DB: int = -3
     PHASE5_BACKCHANNEL_VOLUME_DB: int = -8
     PHASE5_LAUGH_VOLUME_DB: int = -4
+    PHASE5_INTERRUPT_MAX_DUAL_PLAY_MS: int = 3000  # max simultaneous playback
+    PHASE5_INTERRUPT_FADE_OUT_MS: int = 500  # fade-out for interrupted speaker
 
     # Post-Processor (EQ)
     PHASE5_EQ_PRESENCE_FREQ: int = 3000

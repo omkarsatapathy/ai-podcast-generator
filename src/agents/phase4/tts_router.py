@@ -30,24 +30,29 @@ from src.models.phase4 import (
 from src.tools.audio_tools import inspect_wav_file, validate_wav_file, write_audio_bytes_atomic
 from src.tools.elevenlabs_tts import synthesize_elevenlabs_speech
 from src.tools.gemini_tts import synthesize_gemini_speech
+from src.tools.openai_tts import synthesize_openai_speech
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Global rate limiter — enforces minimum gap between outgoing TTS API calls
-_rate_limit_lock = threading.Lock()
-_last_request_time: float = 0.0
+# Global concurrency limiter — caps simultaneous outgoing TTS API calls
+# Lazily initialised so it picks up runtime settings value.
+_api_semaphore: threading.Semaphore | None = None
+_semaphore_lock = threading.Lock()
+
+
+def _get_api_semaphore() -> threading.Semaphore:
+    global _api_semaphore
+    if _api_semaphore is None:
+        with _semaphore_lock:
+            if _api_semaphore is None:
+                _api_semaphore = threading.Semaphore(settings.PHASE4_MAX_CONCURRENT_API_CALLS)
+    return _api_semaphore
 
 
 def _throttle_api_call() -> None:
-    """Sleep if needed to enforce PHASE4_MIN_REQUEST_GAP_SECONDS between calls."""
-    global _last_request_time
-    with _rate_limit_lock:
-        now = time.time()
-        wait = settings.PHASE4_MIN_REQUEST_GAP_SECONDS - (now - _last_request_time)
-        if wait > 0:
-            time.sleep(wait)
-        _last_request_time = time.time()
+    """Acquire concurrency slot before making a TTS API call."""
+    _get_api_semaphore().acquire()
 
 
 def validate_phase4_input_contract(state: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, Any], bool]:
@@ -119,8 +124,15 @@ def validate_phase4_input_contract(state: Dict[str, Any]) -> Tuple[List[Dict[str
             elif text_ssml.startswith("<"):
                 try:
                     ET.fromstring(text_ssml)
-                except ET.ParseError as exc:
-                    report["errors"].append(f"Invalid SSML for {utterance_id}: {exc}")
+                except ET.ParseError:
+                    # Auto-repair: wrap clean text in <speak> so one bad
+                    # SSML utterance doesn't block the entire pipeline.
+                    clean = utterance.get("text_clean", "")
+                    clean_escaped = re.sub(r'&(?!amp;|lt;|gt;|apos;|quot;|#)', '&amp;', clean)
+                    utterance["text_ssml"] = f"<speak>{clean_escaped}</speak>"
+                    report["warnings"].append(
+                        f"Auto-repaired invalid SSML for {utterance_id} (using text_clean fallback)"
+                    )
             elif provider == "google":
                 report["warnings"].append(
                     f"Google provider received plain text for {utterance_id}; routing will normalize it"
@@ -368,6 +380,21 @@ def build_provider_payload(job: TTSJob) -> Dict[str, Any]:
             "text": text,
         }
 
+    if job.provider == "openai":
+        instructions = "Speak clearly and naturally."
+        if not job.repair_mode:
+            instructions = (
+                f"You are a {job.role} on a podcast. "
+                "Speak naturally and conversationally. Keep the wording exact."
+            )
+        return {
+            "provider": "openai",
+            "model": job.model,
+            "voice_id": job.voice_id,
+            "text": text,
+            "instructions": instructions,
+        }
+
     raise ValueError(f"Unsupported TTS provider: {job.provider}")
 
 
@@ -460,30 +487,48 @@ def synthesize_routed_job(job: Dict[str, Any]) -> Dict[str, Any]:
     payload = validated_job.payload or build_provider_payload(validated_job)
 
     _throttle_api_call()
-
-    if validated_job.provider == "google":
-        result = synthesize_gemini_speech(
-            prompt=payload["prompt"],
-            voice_name=payload["voice_id"],
-            model=payload["model"],
-            project_id=settings.GCP_PROJECT_ID,
-            location=settings.GCP_LOCATION,
-        )
-        from src.utils.cost_tracker import cost_tracker
-        cost_tracker.track_tts(
-            model=payload["model"],
-            input_tokens=result.get("input_tokens", 0),
-        )
-    elif validated_job.provider == "elevenlabs":
-        result = synthesize_elevenlabs_speech(
-            text=payload["text"],
-            voice_id=payload["voice_id"],
-            model=payload["model"],
-            api_key=settings.ELEVENLABS_API_KEY,
-            timeout_seconds=settings.PHASE4_REQUEST_TIMEOUT_SECONDS,
-        )
-    else:
-        raise ValueError(f"Unsupported TTS provider: {validated_job.provider}")
+    try:
+        if validated_job.provider == "google":
+            result = synthesize_gemini_speech(
+                prompt=payload["prompt"],
+                voice_name=payload["voice_id"],
+                model=payload["model"],
+                project_id=settings.GCP_PROJECT_ID,
+                location=settings.GCP_LOCATION,
+            )
+            from src.utils.cost_tracker import cost_tracker
+            cost_tracker.track_tts(
+                model=payload["model"],
+                input_tokens=result.get("input_tokens", 0),
+            )
+        elif validated_job.provider == "elevenlabs":
+            result = synthesize_elevenlabs_speech(
+                text=payload["text"],
+                voice_id=payload["voice_id"],
+                model=payload["model"],
+                api_key=settings.ELEVENLABS_API_KEY,
+                timeout_seconds=settings.PHASE4_REQUEST_TIMEOUT_SECONDS,
+            )
+        elif validated_job.provider == "openai":
+            result = synthesize_openai_speech(
+                text=payload["text"],
+                voice=payload["voice_id"],
+                model=payload["model"],
+                api_key=settings.OPENAI_API_KEY,
+                instructions=payload.get("instructions", ""),
+                timeout_seconds=settings.PHASE4_REQUEST_TIMEOUT_SECONDS,
+            )
+            from src.utils.cost_tracker import cost_tracker
+            # Approximate token count from character length (1 token ≈ 4 chars)
+            estimated_tokens = max(1, len(payload.get("text", "")) // 4)
+            cost_tracker.track_tts(
+                model=payload["model"],
+                input_tokens=estimated_tokens,
+            )
+        else:
+            raise ValueError(f"Unsupported TTS provider: {validated_job.provider}")
+    finally:
+        _get_api_semaphore().release()
 
     write_audio_bytes_atomic(
         path=validated_job.output_path,
@@ -945,6 +990,22 @@ def _resolve_provider_voice(provider: str, role: str, persona: Dict[str, Any]) -
         source = "persona" if persona.get("elevenlabs_voice_id") == voice_id else "default"
         return voice_id, source, None
 
+    if provider == "openai":
+        voice_id = (
+            persona.get("openai_tts_voice")
+            or persona.get("tts_voice_id")
+            or _default_voice_for_role(provider, role)
+        )
+        if voice_id and voice_id.lower() not in {v.lower() for v in settings.OPENAI_TTS_ALLOWED_VOICES}:
+            fallback_voice = _default_voice_for_role(provider, role)
+            if fallback_voice:
+                return fallback_voice, "default", f"Unsupported OpenAI voice '{voice_id}', using role default"
+            return None, "missing", f"Unsupported OpenAI voice '{voice_id}' and no default configured"
+        if not voice_id:
+            return None, "missing", "No OpenAI TTS voice configured"
+        source = "persona" if persona.get("openai_tts_voice") == voice_id else "default"
+        return voice_id.lower(), source, None
+
     return None, "missing", f"Unsupported provider '{provider}'"
 
 
@@ -966,12 +1027,19 @@ def _default_voice_for_role(provider: str, role: str) -> str | None:
             "skeptic": settings.ELEVENLABS_SKEPTIC_VOICE_ID,
         }.get(role, settings.ELEVENLABS_HOST_VOICE_ID)
 
+    if provider == "openai":
+        return {
+            "host": settings.OPENAI_TTS_HOST_VOICE,
+            "expert": settings.OPENAI_TTS_EXPERT_VOICE,
+            "skeptic": settings.OPENAI_TTS_SKEPTIC_VOICE,
+        }.get(role, settings.OPENAI_TTS_HOST_VOICE)
+
     return None
 
 
 def _provider_name(value: str) -> str:
     provider = (value or "google").strip().lower()
-    if provider not in {"google", "elevenlabs"}:
+    if provider not in {"google", "elevenlabs", "openai"}:
         raise ValueError(f"Unsupported TTS provider: {value}")
     return provider
 
@@ -988,6 +1056,8 @@ def _model_for_provider(provider: str | None) -> str | None:
         return settings.GOOGLE_TTS_MODEL
     if provider == "elevenlabs":
         return settings.ELEVENLABS_TTS_MODEL
+    if provider == "openai":
+        return settings.OPENAI_TTS_MODEL
     return None
 
 

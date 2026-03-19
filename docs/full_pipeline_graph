@@ -1,0 +1,52 @@
+%%{init: {'flowchart': {'curve': 'linear'}}}%%
+graph TD
+    Start([Start: Topic Input])
+    
+    subgraph Phase1[" Phase 1: Research & Ingestion "]
+        P1_Init["Initialize"]
+        P1_Search["Search & Scrape"]
+        P1_Rank["Rank & Dedup"]
+        P1_Init --> P1_Search --> P1_Rank
+    end
+    
+    subgraph Phase2[" Phase 2: Content Planning "]
+        P2_Plan["Chapter Planner"]
+        P2_Char["Character Designer"]
+        P2_Plan --> P2_Char
+    end
+    
+    subgraph Phase3[" Phase 3: Dialogue Generation "]
+        P3_Gen["Dialogue Generator"]
+        P3_QA["Quality Assurance"]
+        P3_Gen --> P3_QA
+    end
+    
+    subgraph Phase4[" Phase 4: Voice Synthesis "]
+        P4_Val["Validate Input"]
+        P4_TTS["TTS Synthesis"]
+        P4_QC["Audio QC"]
+        P4_Val --> P4_TTS --> P4_QC
+    end
+    
+    subgraph Phase5[" Phase 5: Audio Post-Processing "]
+        P5_Overlap["Overlap Engine"]
+        P5_Post["Post Processor"]
+        P5_Cold["Cold Open Gen"]
+        P5_Stitch["Chapter Stitcher"]
+        P5_Overlap --> P5_Post --> P5_Cold --> P5_Stitch
+    end
+    
+    End([" 🎙️ Final Podcast MP3 "])
+    
+    Start --> Phase1
+    Phase1 --> Phase2
+    Phase2 --> Phase3
+    Phase3 --> Phase4
+    Phase4 --> Phase5
+    Phase5 --> End
+    
+    classDef phaseStyle fill:#e1f5ff,stroke:#01579b,stroke-width:2px,color:#000
+    classDef startEnd fill:#c8e6c9,stroke:#1b5e20,stroke-width:2px,color:#000
+    
+    class Phase1,Phase2,Phase3,Phase4,Phase5 phaseStyle
+    class Start,End startEnd

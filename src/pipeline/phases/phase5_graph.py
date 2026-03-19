@@ -50,6 +50,7 @@ class Phase5State(TypedDict, total=False):
     chapter_mixed_audio_paths: Dict[int, str]
     utterance_timestamp_maps: Dict[int, Dict[str, Dict[str, int]]]
     overlap_engine_reports: List[Dict[str, Any]]
+    host_intro_audio_path: str
 
     # Step 3: Post-Processor
     chapter_mastered_audio_paths: Dict[int, str]
@@ -131,17 +132,36 @@ def validate_phase5_input(state: Phase5State) -> Phase5State:
             validated_manifests.append(manifest)
             total_clips += len(clips) - missing
 
-        # Collect timing directives
-        for d in manifest.get("timing_directives", []):
+        # Collect timing directives (Phase 5 native format: type + duration_ms)
+        manifest_directives = manifest.get("timing_directives", [])
+        for d in manifest_directives:
             d_type = d.get("type", "").upper()
             if d_type in ("INTERRUPT", "BACKCHANNEL", "LAUGH"):
                 validated_directives.append(d)
 
-    # Also collect from timing_metadata
-    timing_meta = state.get("timing_metadata") or p4_output.get("timing_metadata", {})
-    for ch_key, ch_directives in timing_meta.items():
-        if isinstance(ch_directives, list):
-            validated_directives.extend(ch_directives)
+        # Convert Phase 4 format (overlap_previous_seconds, backchannel_speaker)
+        # into Phase 5 native format (type + duration_ms / type + utterance_id)
+        for i, d in enumerate(manifest_directives):
+            overlap_sec = d.get("overlap_previous_seconds", 0) or 0
+            if overlap_sec > 0 and i > 0:
+                prev_uid = manifest_directives[i - 1].get("utterance_id", "")
+                if prev_uid:
+                    validated_directives.append({
+                        "type": "INTERRUPT",
+                        "utterance_id": prev_uid,
+                        "duration_ms": int(overlap_sec * 1000),
+                        "chapter_number": ch_num,
+                    })
+            bc_speaker = d.get("backchannel_speaker")
+            if bc_speaker:
+                validated_directives.append({
+                    "type": "BACKCHANNEL",
+                    "utterance_id": d.get("utterance_id", ""),
+                    "chapter_number": ch_num,
+                })
+
+    # timing_metadata mirrors manifest timing_directives (built from the
+    # same source in Phase 4), so we skip it to avoid duplicate directives.
 
     if not validated_manifests:
         report["errors"].append("All chapters failed validation")
@@ -202,6 +222,66 @@ def validate_phase5_input(state: Phase5State) -> Phase5State:
     return state
 
 
+def _split_intro_from_chapter1(
+    manifest: Dict[str, Any],
+    chapter_dialogues: List[Dict[str, Any]],
+) -> tuple[Dict[str, Any] | None, Dict[str, Any]]:
+    """Separate beat-0 (intro) clips from chapter 1 so they can be stitched independently.
+
+    Returns (intro_manifest_or_None, remaining_chapter_manifest).
+    Only chapter 1 is split; other chapters pass through unchanged.
+    """
+    if manifest.get("chapter_number") != 1:
+        return None, manifest
+
+    # Find beat-0 utterance IDs from the dialogue data
+    ch1_dialogue = next(
+        (c for c in chapter_dialogues if c.get("chapter_number") == 1), None
+    )
+    if not ch1_dialogue:
+        return None, manifest
+
+    beat0_utt_ids = {
+        u["utterance_id"]
+        for u in ch1_dialogue.get("utterances", [])
+        if u.get("beat") == 0
+    }
+    if not beat0_utt_ids:
+        return None, manifest
+
+    # Partition clips
+    intro_clips = []
+    chapter_clips = []
+    for clip in manifest.get("clips", []):
+        # Match on lineage_utterance_id (original utterance id before segment split)
+        lineage_id = clip.get("lineage_utterance_id", clip.get("utterance_id", ""))
+        if lineage_id in beat0_utt_ids:
+            intro_clips.append(clip)
+        else:
+            chapter_clips.append(clip)
+
+    if not intro_clips:
+        return None, manifest
+
+    intro_manifest = {
+        **manifest,
+        "clips": intro_clips,
+        "timing_directives": [
+            d for d in manifest.get("timing_directives", [])
+            if d.get("utterance_id") in beat0_utt_ids
+        ],
+    }
+    remaining_manifest = {
+        **manifest,
+        "clips": chapter_clips,
+        "timing_directives": [
+            d for d in manifest.get("timing_directives", [])
+            if d.get("utterance_id") not in beat0_utt_ids
+        ],
+    }
+    return intro_manifest, remaining_manifest
+
+
 def run_overlap_engine_node(state: Phase5State) -> Phase5State:
     """Mix sequential clips into natural conversation per chapter."""
 
@@ -214,26 +294,60 @@ def run_overlap_engine_node(state: Phase5State) -> Phase5State:
     overlap_dir = output_paths.get("overlap", "")
     manifests = state.get("validated_manifests", [])
     directives = state.get("validated_timing_directives", [])
+    chapter_dialogues = state.get("chapter_dialogues", [])
 
     mixed_paths: Dict[int, str] = {}
     timestamp_maps: Dict[int, Dict[str, Dict[str, int]]] = {}
     reports = []
+    host_intro_audio_path = ""
 
     for manifest in manifests:
         ch_num = manifest.get("chapter_number", 0)
+
+        # Split beat-0 intro from chapter 1 so the stitcher can place it correctly
+        intro_manifest, working_manifest = _split_intro_from_chapter1(
+            manifest, chapter_dialogues
+        )
+
+        # Process the intro portion of chapter 1 separately
+        if intro_manifest and intro_manifest.get("clips"):
+            intro_directives = [
+                d for d in directives
+                if any(
+                    c["utterance_id"] == d.get("utterance_id")
+                    for c in intro_manifest.get("clips", [])
+                )
+            ]
+            try:
+                intro_path, intro_ts, intro_report = run_overlap_engine(
+                    intro_manifest, intro_directives, overlap_dir,
+                    chapter_number=0,  # use 0 to distinguish from chapter content
+                )
+                if intro_path:
+                    host_intro_audio_path = intro_path
+                    # Also add to mixed_paths so the mastering chain processes it
+                    mixed_paths[0] = intro_path
+                    timestamp_maps[0] = intro_ts
+                reports.append(intro_report.model_dump())
+                logger.info("Separated host intro: %s", intro_path)
+            except Exception as exc:
+                logger.warning("Host intro overlap failed, intro stays in ch1: %s", exc)
+                # Fall back: use original unsplit manifest
+                working_manifest = manifest
+
         # Filter directives for this chapter
         ch_directives = [
             d for d in directives
             if d.get("chapter_number") == ch_num
             or any(
                 c["utterance_id"] == d.get("utterance_id")
-                for c in manifest.get("clips", [])
+                for c in working_manifest.get("clips", [])
             )
         ]
 
         try:
             path, ts_map, report = run_overlap_engine(
-                manifest, ch_directives, overlap_dir, ch_num
+                working_manifest, ch_directives, overlap_dir, ch_num
             )
             if path:
                 mixed_paths[ch_num] = path
@@ -246,8 +360,11 @@ def run_overlap_engine_node(state: Phase5State) -> Phase5State:
     state["chapter_mixed_audio_paths"] = mixed_paths
     state["utterance_timestamp_maps"] = timestamp_maps
     state["overlap_engine_reports"] = reports
+    state["host_intro_audio_path"] = host_intro_audio_path
 
     print(f"   ✅ Mixed {len(mixed_paths)} chapter(s)")
+    if host_intro_audio_path:
+        print(f"   ✅ Host intro separated from chapter 1")
     return state
 
 
@@ -332,6 +449,10 @@ def run_chapter_stitcher_node(state: Phase5State) -> Phase5State:
     output_paths = state.get("phase5_output_paths", {})
     base_dir = output_paths.get("base", "")
 
+    # Use the mastered intro path if available (key 0 in mastered paths)
+    mastered_paths = state.get("chapter_mastered_audio_paths", {})
+    host_intro_path = mastered_paths.get(0, state.get("host_intro_audio_path", ""))
+
     try:
         mp3_path, markers, report = run_chapter_stitcher(
             cold_open_path=state.get("cold_open_path"),
@@ -341,6 +462,7 @@ def run_chapter_stitcher_node(state: Phase5State) -> Phase5State:
             topic=state.get("topic", "AI Podcast"),
             episode_id=state.get("episode_id", "episode_001"),
             output_dir=base_dir,
+            host_intro_audio_path=host_intro_path,
         )
         state["final_podcast_mp3_path"] = mp3_path
         state["chapter_markers"] = markers

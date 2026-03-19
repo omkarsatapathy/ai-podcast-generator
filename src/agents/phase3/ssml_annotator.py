@@ -64,6 +64,9 @@ def _convert_to_ssml(text: str) -> Tuple[str, Dict]:
     # Strip any leftover markers
     text = re.sub(r'\[[A-Z_]+(?::[^\]]+)?\]', '', text)
 
+    # Escape bare ampersands that are not already XML entities
+    text = re.sub(r'&(?!amp;|lt;|gt;|apos;|quot;|#)', '&amp;', text)
+
     return f"<speak>{text.strip()}</speak>", meta
 
 

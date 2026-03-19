@@ -175,6 +175,7 @@ def run_chapter_stitcher(
     topic: str,
     episode_id: str,
     output_dir: str,
+    host_intro_audio_path: str = "",
 ) -> Tuple[str, Dict[str, Any], Dict[str, Any]]:
     """Assemble all components into the final podcast MP3."""
 
@@ -206,24 +207,34 @@ def run_chapter_stitcher(
     chapter_markers["Intro"] = {"start_ms": 0, "end_ms": len(episode)}
     episode += AudioSegment.silent(duration=500)
 
-    # Host intro placeholder (silence if no pre-rendered clip)
-    host_intro_path = Path(output_dir) / "host_intro.wav"
-    if host_intro_path.exists():
+    # Host intro: use the separated beat-0 intro audio if available,
+    # otherwise fall back to a pre-rendered file or silence placeholder.
+    host_intro = None
+    if host_intro_audio_path and Path(host_intro_audio_path).exists():
         try:
-            host_intro = AudioSegment.from_wav(str(host_intro_path))
+            host_intro = AudioSegment.from_wav(host_intro_audio_path)
             host_intro = convert_to_pipeline_format(host_intro)
-        except Exception:
+            logger.info("Using separated beat-0 host intro (%d ms)", len(host_intro))
+        except Exception as exc:
+            logger.warning("Failed to load host intro audio: %s", exc)
+    if host_intro is None:
+        host_intro_path = Path(output_dir) / "host_intro.wav"
+        if host_intro_path.exists():
+            try:
+                host_intro = AudioSegment.from_wav(str(host_intro_path))
+                host_intro = convert_to_pipeline_format(host_intro)
+            except Exception:
+                host_intro = AudioSegment.silent(duration=2000)
+        else:
             host_intro = AudioSegment.silent(duration=2000)
-    else:
-        host_intro = AudioSegment.silent(duration=2000)
 
     intro_start = len(episode)
     episode += host_intro
     chapter_markers["Introduction"] = {"start_ms": intro_start, "end_ms": len(episode)}
     episode += AudioSegment.silent(duration=300)
 
-    # Append each chapter
-    sorted_chapters = sorted(chapter_mastered_paths.keys())
+    # Append each chapter (skip key 0 — that's the host intro, already placed above)
+    sorted_chapters = sorted(ch for ch in chapter_mastered_paths.keys() if ch > 0)
     for i, ch_num in enumerate(sorted_chapters):
         ch_path = chapter_mastered_paths[ch_num]
         if not Path(ch_path).exists():

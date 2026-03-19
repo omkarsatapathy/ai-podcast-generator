@@ -45,6 +45,9 @@ Usage:
 
     # Combine options:
     python tests/test_graph_with_cached.py "topic here" --from-phase 3 --until-phase 5 --minutes 25
+
+    # Use 3 speakers instead of the default (2):
+    python tests/test_graph_with_cached.py "topic here" --speakers 3
 """
 
 import os
@@ -268,7 +271,7 @@ def run_phase1(topic: str) -> dict:
     return state
 
 
-def run_phase2(state: dict) -> dict:
+def run_phase2(state: dict, num_speakers: int | None = None) -> dict:
     """Execute Phase 2: Content Planning."""
     from src.pipeline.phases import create_phase2_graph
 
@@ -276,7 +279,7 @@ def run_phase2(state: dict) -> dict:
     print("  PHASE 2: CONTENT PLANNING")
     print("=" * 70 + "\n")
 
-    state["num_speakers"] = settings.NUM_SPEAKERS
+    state["num_speakers"] = num_speakers if num_speakers is not None else settings.NUM_SPEAKERS
 
     graph = create_phase2_graph()
     state = graph.invoke(state)
@@ -519,6 +522,9 @@ def main():
                         dest="minutes",
                         help=f"Minutes of Phase 3 content to synthesise in Phase 4 "
                              f"(default: {PHASE4_DEFAULT_MINUTES})")
+    parser.add_argument("--speakers", type=int, default=None,
+                        dest="speakers",
+                        help="Number of podcast speakers/participants (2 or 3, default: from settings)")
     args = parser.parse_args()
 
     topic = " ".join(args.topic)
@@ -543,6 +549,7 @@ def main():
     print(f"  TTS provider:    {settings.TTS_PROVIDER}")
     print(f"  Phase range:     {args.from_phase or 'auto'} → {args.until_phase}")
     print(f"  Phase 4 slice:   {args.minutes} min")
+    print(f"  Speakers:        {args.speakers if args.speakers is not None else settings.NUM_SPEAKERS} ({'override' if args.speakers is not None else 'from settings'})")
     print(f"  Fresh:           {args.fresh}")
     print()
 
@@ -593,6 +600,8 @@ def main():
         try:
             if phase == 1:
                 state = PHASE_RUNNERS[phase](topic)
+            elif phase == 2:
+                state = run_phase2(state, num_speakers=args.speakers)
             elif phase == 4:
                 state = run_phase4(state, args.minutes)
             else:
