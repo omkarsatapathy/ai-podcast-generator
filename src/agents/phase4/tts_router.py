@@ -12,6 +12,7 @@ import threading
 import time
 import xml.etree.ElementTree as ET
 from collections import defaultdict
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
@@ -30,6 +31,7 @@ from src.models.phase4 import (
 )
 from src.tools.audio_tools import inspect_wav_file, validate_wav_file, write_audio_bytes_atomic
 from src.api_factory.voice import synthesize_speech
+from src.tools.google_translate import translate_text
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -38,6 +40,36 @@ logger = get_logger(__name__)
 # Lazily initialised so it picks up runtime settings value.
 _api_semaphore: threading.Semaphore | None = None
 _semaphore_lock = threading.Lock()
+
+
+class _RateLimiter:
+    """Simple sliding-window rate limiter."""
+
+    def __init__(self, max_calls: int, period_seconds: float = 1.0):
+        self.max_calls = max(1, int(max_calls))
+        self.period_seconds = period_seconds
+        self._calls: deque[float] = deque()
+        self._lock = threading.Lock()
+
+    def acquire(self) -> None:
+        while True:
+            wait_seconds = 0.0
+            now = time.monotonic()
+            with self._lock:
+                while self._calls and (now - self._calls[0]) >= self.period_seconds:
+                    self._calls.popleft()
+
+                if len(self._calls) < self.max_calls:
+                    self._calls.append(now)
+                    return
+
+                wait_seconds = self.period_seconds - (now - self._calls[0])
+
+            if wait_seconds > 0:
+                time.sleep(wait_seconds)
+
+
+_translation_rate_limiter = _RateLimiter(settings.PHASE4_TRANSLATION_MAX_REQUESTS_PER_SECOND)
 
 
 def _get_api_semaphore() -> threading.Semaphore:
@@ -320,6 +352,115 @@ def plan_tts_jobs(
     return jobs, _materialize_lookup_maps(job_lookup_maps), planned_output_paths
 
 
+def is_translation_mode_enabled() -> bool:
+    """Translation mode is active only for Sarvam with non-English target."""
+
+    return (
+        settings.PHASE4_TRANSLATION_ENABLED
+        and _provider_name(settings.TTS_PROVIDER) == "sarvam"
+        and settings.TARGET_LANGUAGE.strip().lower() != "en-in"
+    )
+
+
+def translate_tts_jobs(tts_jobs: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Translate planned jobs before provider payload routing."""
+
+    enabled = is_translation_mode_enabled()
+    if not enabled or not tts_jobs:
+        return tts_jobs, {
+            "enabled": enabled,
+            "target_language": settings.TARGET_LANGUAGE,
+            "source_language": "en",
+            "total_jobs": len(tts_jobs),
+            "translated_jobs": 0,
+            "failed_jobs": 0,
+            "errors": [],
+            "workers": settings.PHASE4_TRANSLATION_PARALLEL_WORKERS,
+            "max_rps": settings.PHASE4_TRANSLATION_MAX_REQUESTS_PER_SECOND,
+            "cache_hits": 0,
+        }
+
+    target_language = settings.TARGET_LANGUAGE.strip()
+    source_language = "en"
+    translated_jobs: List[Dict[str, Any]] = [dict(job) for job in tts_jobs]
+    errors: List[str] = []
+    cache_hits = 0
+    translated_count = 0
+
+    cache: Dict[str, str] = {}
+    cache_lock = threading.Lock()
+
+    def _translate_one(index: int, job_dict: Dict[str, Any]) -> Tuple[int, Dict[str, Any], bool, bool, str | None]:
+        validated_job = TTSJob.model_validate(job_dict)
+        original_text = _plain_text_for_job(validated_job.model_dump())
+        if not original_text:
+            return index, job_dict, False, False, None
+
+        with cache_lock:
+            cached = cache.get(original_text)
+        if cached is not None:
+            updated = dict(job_dict)
+            updated["text_clean"] = cached
+            updated["text_with_naturalness"] = cached
+            updated["text_ssml"] = cached
+            return index, updated, True, True, None
+
+        try:
+            _translation_rate_limiter.acquire()
+            translated_text = translate_text(
+                text=original_text,
+                target_language=target_language,
+                source_language=source_language,
+                timeout_seconds=settings.PHASE4_TRANSLATION_TIMEOUT_SECONDS,
+            )
+            with cache_lock:
+                cache[original_text] = translated_text
+
+            updated = dict(job_dict)
+            updated["text_clean"] = translated_text
+            updated["text_with_naturalness"] = translated_text
+            updated["text_ssml"] = translated_text
+            return index, updated, True, False, None
+        except Exception as exc:  # noqa: BLE001
+            return index, job_dict, False, False, f"{validated_job.job_id}: {exc}"
+
+    with ThreadPoolExecutor(max_workers=max(1, settings.PHASE4_TRANSLATION_PARALLEL_WORKERS)) as executor:
+        future_map = {
+            executor.submit(_translate_one, idx, job): (idx, job)
+            for idx, job in enumerate(translated_jobs)
+        }
+        for future in as_completed(future_map):
+            idx, _ = future_map[future]
+            try:
+                out_idx, translated_job, translated, was_cache_hit, error = future.result()
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"index={idx}: {exc}")
+                continue
+
+            translated_jobs[out_idx] = translated_job
+            if translated:
+                translated_count += 1
+            if was_cache_hit:
+                cache_hits += 1
+            if error:
+                errors.append(error)
+
+    report = {
+        "enabled": True,
+        "target_language": target_language,
+        "source_language": source_language,
+        "total_jobs": len(tts_jobs),
+        "translated_jobs": translated_count,
+        "failed_jobs": len(errors),
+        "errors": errors,
+        "workers": settings.PHASE4_TRANSLATION_PARALLEL_WORKERS,
+        "max_rps": settings.PHASE4_TRANSLATION_MAX_REQUESTS_PER_SECOND,
+        "cache_hits": cache_hits,
+    }
+
+    return translated_jobs, report
+
+
 def route_tts_jobs(
     tts_jobs: List[Dict[str, Any]],
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
@@ -400,11 +541,12 @@ def build_provider_payload(job: TTSJob) -> Dict[str, Any]:
         }
 
     if job.provider == "sarvam":
+        safe_text = _prepare_sarvam_text_for_api(text)
         return {
             "provider": "sarvam",
             "model": job.model,
             "voice_id": job.voice_id,
-            "text": text,
+            "text": safe_text,
         }
 
     raise ValueError(f"Unsupported TTS provider: {job.provider}")
@@ -545,6 +687,7 @@ def synthesize_routed_job(job: Dict[str, Any]) -> Dict[str, Any]:
                 text=payload["text"],
                 voice=payload.get("voice_id", "meera"),
                 model=payload.get("model", settings.SARVAM_TTS_MODEL),
+                target_language=settings.TARGET_LANGUAGE,
                 api_key=os.environ.get("SARVAM_API_KEY", ""),
                 timeout_seconds=settings.PHASE4_REQUEST_TIMEOUT_SECONDS,
             )
@@ -768,6 +911,7 @@ def package_phase4_output(state: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[s
     quality_reports = {
         "validation_report": state.get("validation_report") or {},
         "voice_resolution_report": state.get("voice_resolution_report") or {},
+        "translation_report": state.get("translation_report") or {},
         "payload_validation_report": state.get("payload_validation_report") or {},
         "synthesis_log": state.get("synthesis_log") or [],
         "qc_report": state.get("qc_report") or {},
@@ -861,16 +1005,17 @@ def _run_job_with_retries(job: Dict[str, Any], max_retries: int) -> Dict[str, An
             })
             return {"clip": result["clip"], "failed_job": None, "log": execution_log}
         except Exception as exc:
+            retryable = _is_retryable(exc) or str(attempt_job.get("provider", "")).lower() == "sarvam"
             execution_log.append({
                 "job_id": attempt_job["job_id"],
                 "order_index": attempt_job["order_index"],
                 "attempt": attempts,
                 "provider": attempt_job["provider"],
-                "status": "retry" if attempts <= max_retries and _is_retryable(exc) else "failed",
+                "status": "retry" if attempts <= max_retries and retryable else "failed",
                 "error": str(exc),
                 "elapsed_seconds": round(time.time() - started, 3),
             })
-            if attempts <= max_retries and _is_retryable(exc):
+            if attempts <= max_retries and retryable:
                 delay = _retry_delay_seconds(attempts, exc)
                 print(
                     f"   ⏳  [{attempt_job['job_id']}] retry {attempts}/{max_retries} in {delay:.1f}s  —  {exc}",
@@ -949,6 +1094,33 @@ def _plain_text_for_job(job: Dict[str, Any]) -> str:
     text = re.sub(r"\[[A-Z_]+(?::[^\]]+)?\]", " ", text)
     text = html.unescape(text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _prepare_sarvam_text_for_api(text: str) -> str:
+    """Normalize text for Sarvam and enforce per-job char limits."""
+
+    normalized = (text or "").strip()
+    if not normalized:
+        return normalized
+
+    normalized = normalized.replace("*", "")
+    normalized = normalized.replace("`", "")
+    normalized = normalized.replace("\u2014", "-")
+    normalized = normalized.replace("\u2013", "-")
+    normalized = normalized.replace("\u2026", "...")
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+
+    limit = settings.SARVAM_TTS_MAX_CHARS_PER_JOB
+    if len(normalized) <= limit:
+        return normalized
+
+    clipped = normalized[:limit]
+    cut_points = [clipped.rfind(ch) for ch in (". ", "? ", "! ", "; ", ", ", " ")]
+    cut = max(cut_points)
+    if cut > int(limit * 0.65):
+        clipped = clipped[:cut + 1]
+
+    return clipped.strip()
 
 
 def _split_for_synthesis(text: str, max_chars: int | None = None) -> List[str]:
@@ -1138,20 +1310,9 @@ def _seconds_from_duration(value: str | None) -> float:
 
 
 def _retry_delay_seconds(attempt_number: int, exc: Exception | None = None) -> float:
-    # For 429 rate-limit errors use a much longer exponential backoff
-    if exc is not None and isinstance(exc, requests.HTTPError) and exc.response is not None:
-        if exc.response.status_code == 429:
-            retry_after = exc.response.headers.get("Retry-After")
-            if retry_after:
-                try:
-                    return float(retry_after) + 1.0
-                except ValueError:
-                    pass
-            # 30s, 60s, 120s … for successive 429 attempts
-            base = 30.0 * (2 ** max(attempt_number - 1, 0))
-            return base + random.uniform(0.0, 5.0)
-    base = settings.PHASE4_RETRY_BASE_SECONDS * (2 ** max(attempt_number - 1, 0))
-    return base + random.uniform(0.0, 0.25)
+    _ = attempt_number
+    _ = exc
+    return float(settings.PHASE4_RETRY_SLEEP_SECONDS)
 
 
 def _is_retryable(exc: Exception) -> bool:

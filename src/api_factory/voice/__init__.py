@@ -50,7 +50,7 @@ def _synthesize_sarvam(
     voice: str = "meera",
     model: str = "bulbul:v2",
     api_key: str = "",
-    target_language: str = "en-IN",
+    target_language: str = "",
     timeout_seconds: int = 60,
     **_: Any,
 ) -> Dict[str, Any]:
@@ -61,6 +61,7 @@ def _synthesize_sarvam(
     api_key = api_key or os.environ.get("SARVAM_API_KEY", "")
     if not api_key:
         raise ValueError("SARVAM_API_KEY is required for Sarvam TTS")
+    target_language = target_language or settings.TARGET_LANGUAGE
 
     resp = requests.post(
         "https://api.sarvam.ai/text-to-speech",

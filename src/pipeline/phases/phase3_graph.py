@@ -12,7 +12,7 @@ from typing import TypedDict, List, Dict, Any
 
 from langgraph.graph import StateGraph, END
 
-from config.settings import settings
+from config.settings import settings, TARGET_LANGUAGE
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -73,6 +73,23 @@ def expert_expander_node(state: Phase3State) -> Phase3State:
 def naturalness_node(state: Phase3State) -> Phase3State:
     """Inject naturalness markers into all chapters."""
     from src.agents.phase3.naturalness_injector import inject_naturalness
+
+    target_language = (getattr(settings, "TARGET_LANGUAGE", "") or TARGET_LANGUAGE or "en-IN").strip().lower()
+    provider = (settings.TTS_PROVIDER or "").strip().lower()
+    translation_mode = (
+        settings.PHASE4_TRANSLATION_ENABLED
+        and provider == "sarvam"
+        and target_language != "en-in"
+    )
+    if translation_mode:
+        print("🎭 NATURALNESS INJECTION (skipped: translation mode ON)")
+        return state
+
+    if provider == "sarvam":
+        print(
+            "🎭 NATURALNESS INJECTION "
+            f"(active: translation_mode={translation_mode}, target_language={target_language})"
+        )
 
     print("🎭 NATURALNESS INJECTION")
     for cd in state["chapter_dialogues"]:

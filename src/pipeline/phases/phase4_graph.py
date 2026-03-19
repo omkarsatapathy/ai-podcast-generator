@@ -15,6 +15,7 @@ from src.agents.phase4.tts_router import (
     plan_tts_jobs,
     resolve_voice_policy,
     route_tts_jobs,
+    translate_tts_jobs,
     validate_phase4_input_contract,
 )
 
@@ -37,6 +38,8 @@ class Phase4State(TypedDict, total=False):
     voice_resolution_report: Dict[str, Any]
 
     tts_jobs: List[Dict[str, Any]]
+    translated_tts_jobs: List[Dict[str, Any]]
+    translation_report: Dict[str, Any]
     job_lookup_maps: Dict[str, Any]
     planned_output_paths: Dict[str, str]
 
@@ -143,11 +146,29 @@ def route_jobs_node(state: Phase4State) -> Phase4State:
         return state
 
     print("\n🧭 PROVIDER ROUTING")
-    routed_jobs, routing_decisions, payload_report = route_tts_jobs(state.get("tts_jobs") or [])
+    jobs_for_routing = state.get("translated_tts_jobs") or state.get("tts_jobs") or []
+    routed_jobs, routing_decisions, payload_report = route_tts_jobs(jobs_for_routing)
     state["routed_tts_jobs"] = routed_jobs
     state["routing_decisions"] = routing_decisions
     state["payload_validation_report"] = payload_report
     print(f"   ✅ Routed {len(routed_jobs)} job(s)")
+    return state
+
+
+def translate_jobs_node(state: Phase4State) -> Phase4State:
+    """Translate text jobs when multilingual Sarvam mode is active."""
+
+    if state.get("phase4_blocked"):
+        return state
+
+    print("\n🌐 TEXT TRANSLATION")
+    translated_jobs, translation_report = translate_tts_jobs(state.get("tts_jobs") or [])
+    state["translated_tts_jobs"] = translated_jobs
+    state["translation_report"] = translation_report
+    print(
+        f"   ✅ Enabled: {translation_report.get('enabled', False)} | "
+        f"Translated: {translation_report.get('translated_jobs', 0)}"
+    )
     return state
 
 
@@ -249,6 +270,7 @@ def create_phase4_graph():
     workflow.add_node("validate_input", validate_input_node)
     workflow.add_node("resolve_voice_policy", resolve_voice_policy_node)
     workflow.add_node("plan_tts_jobs", plan_tts_jobs_node)
+    workflow.add_node("translate_tts_jobs", translate_jobs_node)
     workflow.add_node("route_tts_jobs", route_jobs_node)
     workflow.add_node("execute_parallel_synthesis", execute_synthesis_node)
     workflow.add_node("audio_qc_and_repair", qc_and_repair_node)
@@ -265,7 +287,8 @@ def create_phase4_graph():
         },
     )
     workflow.add_edge("resolve_voice_policy", "plan_tts_jobs")
-    workflow.add_edge("plan_tts_jobs", "route_tts_jobs")
+    workflow.add_edge("plan_tts_jobs", "translate_tts_jobs")
+    workflow.add_edge("translate_tts_jobs", "route_tts_jobs")
     workflow.add_edge("route_tts_jobs", "execute_parallel_synthesis")
     workflow.add_edge("execute_parallel_synthesis", "audio_qc_and_repair")
     workflow.add_edge("audio_qc_and_repair", "build_chapter_manifests")

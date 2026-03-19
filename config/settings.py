@@ -151,6 +151,12 @@ class Settings(BaseSettings):
 
     # TTS Provider: "google", "openai", "elevenlabs", or "sarvam" — switch on the fly
     TTS_PROVIDER: str = 'sarvam'#'openai' #"google"
+    TARGET_LANGUAGE: str = "hi-IN"
+    PHASE4_TRANSLATION_ENABLED: bool = True
+    PHASE4_TRANSLATION_PARALLEL_WORKERS: int = 20
+    PHASE4_TRANSLATION_MAX_REQUESTS_PER_SECOND: int = 60
+    PHASE4_TRANSLATION_TIMEOUT_SECONDS: int = 20
+    GOOGLE_TRANSLATE_API_KEY: str = ""
     TTS_FALLBACK_PROVIDER: str = ""  # empty = no fallback; set to "openai", "elevenlabs", etc. to enable
     GOOGLE_TTS_MODEL: str = "gemini-2.5-pro-preview-tts"
     ELEVENLABS_TTS_MODEL: str = "eleven_v3"
@@ -160,6 +166,7 @@ class Settings(BaseSettings):
     PHASE4_MAX_WORKERS: int = 6
     PHASE4_MAX_CONCURRENT_API_CALLS: int = 6  # semaphore cap on simultaneous Gemini calls
     PHASE4_MAX_RETRIES: int = 3
+    PHASE4_RETRY_SLEEP_SECONDS: float = 5.0
     PHASE4_REQUEST_TIMEOUT_SECONDS: int = 60
     PHASE4_RETRY_BASE_SECONDS: float = 10.0
     PHASE4_MIN_REQUEST_GAP_SECONDS: float = 3.0  # kept for reference; no longer used for gating
